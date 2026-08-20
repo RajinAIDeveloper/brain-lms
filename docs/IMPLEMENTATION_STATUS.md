@@ -26,6 +26,7 @@
 
 - Admins can now create and manage published or draft tests on any curriculum node, add ordered questions from that level's question banks, set duration and passing score, and remove questions. Test attempts are persisted for reporting. Migration `accounts.0006_test_testattempt_testquestion` is applied.
 - Added an Admin Reports workspace with level filtering, all-student performance rows (attendance, active class, test count, average score), class reports, and recent test activity. The existing Classes workspace remains the full class/batch management view.
+- Added dated class lesson plans with curriculum coverage, learning objective, acceptance criteria, summary, and completion state. Admins can link attendance-eligible assignments/tests to a class, see missed subject/topic/section/subsection coverage, and create makeup groups from students with recorded absences. Migrations `accounts.0007_classactivity_makeupgroup_makeupgroupstudent_and_more` and `accounts.0008_classactivity_unique_batch_assignment_activity_and_more` are applied.
 
 ## Validation command
 

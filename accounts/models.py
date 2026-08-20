@@ -96,6 +96,15 @@ class CurriculumNode(models.Model):
     def __str__(self):
         return f'{self.level.code} · {self.title}'
 
+    @property
+    def breadcrumb(self):
+        parts = []
+        node = self
+        while node:
+            parts.append(node.title)
+            node = node.parent
+        return ' → '.join(reversed(parts))
+
 
 class QuestionBank(models.Model):
     node = models.ForeignKey(CurriculumNode, on_delete=models.CASCADE, related_name='question_banks')
@@ -279,6 +288,38 @@ class ClassHoliday(models.Model):
         return f'{self.class_batch} · {self.date}'
 
 
+class ClassSession(models.Model):
+    """One dated meeting in a recurring class schedule."""
+
+    class_batch = models.ForeignKey(ClassBatch, on_delete=models.CASCADE, related_name='sessions')
+    schedule = models.ForeignKey(ClassSchedule, on_delete=models.PROTECT, related_name='sessions')
+    date = models.DateField()
+    curriculum_node = models.ForeignKey(CurriculumNode, on_delete=models.PROTECT, related_name='class_sessions', null=True, blank=True)
+    learning_objective = models.TextField(blank=True)
+    acceptance_criteria = models.TextField(blank=True)
+    summary = models.TextField(blank=True)
+    is_completed = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ['-date', 'schedule__start_time']
+        constraints = [models.UniqueConstraint(fields=['class_batch', 'schedule', 'date'], name='unique_class_session_date')]
+
+    def clean(self):
+        if self.schedule_id and self.schedule.class_batch_id != self.class_batch_id:
+            raise ValidationError({'schedule': 'The schedule must belong to this class.'})
+        if self.date and self.class_batch.start_date and self.date < self.class_batch.start_date:
+            raise ValidationError({'date': 'Session must be within the class date range.'})
+        if self.date and self.class_batch.end_date and self.date > self.class_batch.end_date:
+            raise ValidationError({'date': 'Session must be within the class date range.'})
+        if self.date and self.schedule_id and self.date.weekday() != self.schedule.weekday:
+            raise ValidationError({'date': 'Session date must match the selected weekly schedule day.'})
+        if self.curriculum_node_id and self.curriculum_node.level_id != self.class_batch.level_id:
+            raise ValidationError({'curriculum_node': 'Lesson coverage must belong to the class level.'})
+
+    def __str__(self):
+        return f'{self.class_batch} · {self.date}'
+
+
 class TeacherProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='teacher_profile')
     display_title = models.CharField(max_length=120, default='Math Coach')
@@ -351,6 +392,40 @@ class Enrollment(models.Model):
         return f'{self.student} in {self.class_batch}'
 
 
+class ClassActivity(models.Model):
+    """A class-targeted assignment or test with attendance eligibility."""
+
+    class_batch = models.ForeignKey(ClassBatch, on_delete=models.CASCADE, related_name='activities')
+    assignment = models.ForeignKey(Assignment, on_delete=models.CASCADE, related_name='class_activities', null=True, blank=True)
+    test = models.ForeignKey(Test, on_delete=models.CASCADE, related_name='class_activities', null=True, blank=True)
+    required_attendance_percent = models.PositiveSmallIntegerField(default=75)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='created_class_activities')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(fields=['class_batch', 'assignment'], condition=models.Q(assignment__isnull=False), name='unique_batch_assignment_activity'),
+            models.UniqueConstraint(fields=['class_batch', 'test'], condition=models.Q(test__isnull=False), name='unique_batch_test_activity'),
+        ]
+
+    def clean(self):
+        if bool(self.assignment_id) == bool(self.test_id):
+            raise ValidationError('Choose exactly one assignment or test.')
+        if self.required_attendance_percent > 100:
+            raise ValidationError({'required_attendance_percent': 'Attendance requirement must be between 0 and 100.'})
+        target = self.assignment or self.test
+        if target and target.node.level_id != self.class_batch.level_id:
+            raise ValidationError('The activity must belong to the class level.')
+
+    @property
+    def title(self):
+        return (self.assignment or self.test).title
+
+    def __str__(self):
+        return f'{self.class_batch} · {self.title}'
+
+
 class Attendance(models.Model):
     class Status(models.TextChoices):
         PRESENT = 'PRESENT', 'Present'
@@ -375,5 +450,40 @@ class Attendance(models.Model):
 
     def __str__(self):
         return f'{self.student} · {self.date} · {self.get_status_display()}'
+
+
+class MakeupGroup(models.Model):
+    source_batch = models.ForeignKey(ClassBatch, on_delete=models.PROTECT, related_name='makeup_groups')
+    name = models.CharField(max_length=120)
+    teacher = models.ForeignKey(User, on_delete=models.PROTECT, related_name='makeup_groups')
+    scheduled_date = models.DateField(null=True, blank=True)
+    start_time = models.TimeField(null=True, blank=True)
+    end_time = models.TimeField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='created_makeup_groups')
+    created_at = models.DateTimeField(auto_now_add=True)
+    students = models.ManyToManyField(StudentProfile, through='MakeupGroupStudent', related_name='makeup_groups')
+
+    class Meta:
+        ordering = ['-created_at', 'name']
+
+    def clean(self):
+        if self.teacher_id and self.teacher.role != User.Role.TEACHER:
+            raise ValidationError({'teacher': 'Only teacher users can lead a makeup group.'})
+        if self.start_time and self.end_time and self.end_time <= self.start_time:
+            raise ValidationError({'end_time': 'End time must be after start time.'})
+
+    def __str__(self):
+        return self.name
+
+
+class MakeupGroupStudent(models.Model):
+    group = models.ForeignKey(MakeupGroup, on_delete=models.CASCADE, related_name='memberships')
+    student = models.ForeignKey(StudentProfile, on_delete=models.CASCADE, related_name='makeup_memberships')
+    added_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['group', 'student'], name='unique_makeup_group_student')]
 
 # Create your models here.

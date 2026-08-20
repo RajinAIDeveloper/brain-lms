@@ -61,7 +61,7 @@ Use Django model names equivalent to the following. Add normal audit fields (`cr
 | --- | --- | --- |
 | Identity | `User`, `Profile` | Custom user from the first migration; one role per MVP user |
 | People | `TeacherProfile`, `StudentProfile`, `ParentProfile`, `ParentStudentLink` | Parent can be linked to one or more students |
-| Academics | `CurriculumNode`, `Level`, `Lesson`, `ClassBatch`, `ClassSchedule`, `ClassHoliday`, `Enrollment`, `LevelPromotion`, `Attendance` | `CurriculumNode` is a level-scoped self-referential tree for subjects, topics, sections, and unlimited subsections; a batch has one teacher, date range, weekly schedule, and holiday exceptions |
+| Academics | `CurriculumNode`, `Level`, `Lesson`, `ClassBatch`, `ClassSchedule`, `ClassHoliday`, `ClassSession`, `Enrollment`, `LevelPromotion`, `Attendance`, `ClassActivity`, `MakeupGroup` | `CurriculumNode` is a level-scoped self-referential tree for subjects, topics, sections, and unlimited subsections; dated class sessions capture objective, acceptance criteria, summary, and covered node; class activities calculate attendance eligibility and makeup groups recover missed coverage |
 | Content | `QuestionBank`, `Question`, `Exercise`, `ExerciseQuestion`, `Test`, `TestQuestion` | Admin-authored banks/questions can attach to any curriculum node; questions support numeric and multiple-choice formats, difficulty, answer, options, and explanation |
 | Assignment | `Assignment` | Type, target class or students, due date, status, created by teacher/admin |
 | Learning | `PracticeSession`, `TestAttempt`, `Answer` | Persist question order, submitted answer, correctness, response duration, aggregate results |

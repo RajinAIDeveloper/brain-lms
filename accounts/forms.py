@@ -2,7 +2,7 @@ from datetime import date
 
 from django import forms
 
-from .models import Assignment, ClassBatch, ClassHoliday, ClassSchedule, CurriculumNode, Enrollment, Level, LevelPromotion, ParentStudentLink, Question, QuestionBank, StudentProfile, Test, TestQuestion, User
+from .models import Assignment, Attendance, ClassActivity, ClassBatch, ClassHoliday, ClassSchedule, ClassSession, CurriculumNode, Enrollment, Level, LevelPromotion, MakeupGroup, MakeupGroupStudent, ParentStudentLink, Question, QuestionBank, StudentProfile, Test, TestQuestion, User
 
 
 class AdminAccountCreationForm(forms.ModelForm):
@@ -448,6 +448,115 @@ class ClassHolidayForm(forms.ModelForm):
         if commit:
             holiday.save()
         return holiday
+
+
+class ClassSessionForm(forms.ModelForm):
+    class Meta:
+        model = ClassSession
+        fields = ('schedule', 'date', 'curriculum_node', 'learning_objective', 'acceptance_criteria', 'summary', 'is_completed')
+        widgets = {
+            'date': forms.DateInput(attrs={'type': 'date'}),
+            'learning_objective': forms.Textarea(attrs={'rows': 3, 'placeholder': 'Students will add two-digit numbers using regrouping.'}),
+            'acceptance_criteria': forms.Textarea(attrs={'rows': 3, 'placeholder': 'Complete 8 of 10 questions accurately.'}),
+            'summary': forms.Textarea(attrs={'rows': 3, 'placeholder': 'What was covered and what needs reinforcement.'}),
+        }
+
+    def __init__(self, *args, batch, **kwargs):
+        self.batch = batch
+        super().__init__(*args, **kwargs)
+        self.fields['schedule'].queryset = ClassSchedule.objects.filter(class_batch=batch).order_by('weekday', 'start_time')
+        self.fields['schedule'].label_from_instance = lambda schedule: f'{schedule.get_weekday_display()} · {schedule.start_time:%H:%M}–{schedule.end_time:%H:%M}'
+        self.fields['curriculum_node'].queryset = CurriculumNode.objects.filter(level=batch.level, is_active=True).order_by('ordering', 'title')
+        self.fields['curriculum_node'].label_from_instance = lambda node: f'{node.get_node_type_display()} · {node.title}'
+        self.instance.class_batch = batch
+
+    def clean(self):
+        cleaned = super().clean()
+        selected_date = cleaned.get('date')
+        schedule = cleaned.get('schedule')
+        if selected_date and schedule and selected_date.weekday() != schedule.weekday:
+            self.add_error('date', 'Choose a date matching the selected weekly schedule.')
+        if selected_date and ClassHoliday.objects.filter(class_batch=self.batch, date=selected_date).exists():
+            self.add_error('date', 'This date is marked as a holiday for the class.')
+        if selected_date and schedule and ClassSession.objects.filter(class_batch=self.batch, schedule=schedule, date=selected_date).exclude(pk=self.instance.pk).exists():
+            self.add_error('date', 'A lesson plan already exists for this scheduled date.')
+        return cleaned
+
+    def save(self, commit=True):
+        session = super().save(commit=False)
+        session.class_batch = self.batch
+        if commit:
+            session.save()
+        return session
+
+
+class ClassActivityForm(forms.ModelForm):
+    class Meta:
+        model = ClassActivity
+        fields = ('assignment', 'test', 'required_attendance_percent')
+        widgets = {'required_attendance_percent': forms.NumberInput(attrs={'min': 0, 'max': 100})}
+
+    def __init__(self, *args, batch, created_by, **kwargs):
+        self.batch = batch
+        self.created_by = created_by
+        super().__init__(*args, **kwargs)
+        self.instance.class_batch = batch
+        self.fields['assignment'].queryset = Assignment.objects.filter(node__level=batch.level).order_by('title')
+        self.fields['test'].queryset = Test.objects.filter(node__level=batch.level).order_by('title')
+        self.fields['assignment'].required = False
+        self.fields['test'].required = False
+
+    def clean(self):
+        cleaned = super().clean()
+        assignment = cleaned.get('assignment')
+        test = cleaned.get('test')
+        if bool(assignment) == bool(test):
+            raise forms.ValidationError('Choose exactly one assignment or test for this class activity.')
+        if assignment and ClassActivity.objects.filter(class_batch=self.batch, assignment=assignment).exclude(pk=self.instance.pk).exists():
+            self.add_error('assignment', 'This assignment is already linked to the class.')
+        if test and ClassActivity.objects.filter(class_batch=self.batch, test=test).exclude(pk=self.instance.pk).exists():
+            self.add_error('test', 'This test is already linked to the class.')
+        return cleaned
+
+    def save(self, commit=True):
+        activity = super().save(commit=False)
+        activity.class_batch = self.batch
+        activity.created_by = self.created_by
+        if commit:
+            activity.save()
+        return activity
+
+
+class MakeupGroupForm(forms.ModelForm):
+    students = forms.ModelMultipleChoiceField(queryset=StudentProfile.objects.none(), required=False, label='Students needing makeup')
+
+    class Meta:
+        model = MakeupGroup
+        fields = ('name', 'teacher', 'scheduled_date', 'start_time', 'end_time', 'notes', 'is_active', 'students')
+        widgets = {'scheduled_date': forms.DateInput(attrs={'type': 'date'}), 'start_time': forms.TimeInput(format='%H:%M', attrs={'type': 'time'}), 'end_time': forms.TimeInput(format='%H:%M', attrs={'type': 'time'}), 'notes': forms.Textarea(attrs={'rows': 3, 'placeholder': 'Missed curriculum coverage to recover.'})}
+
+    def __init__(self, *args, source_batch, created_by, **kwargs):
+        self.source_batch = source_batch
+        self.created_by = created_by
+        super().__init__(*args, **kwargs)
+        self.fields['teacher'].queryset = User.objects.filter(role=User.Role.TEACHER, is_active=True).order_by('first_name', 'last_name', 'email')
+        self.fields['teacher'].label_from_instance = lambda teacher: teacher.get_full_name() or teacher.email
+        self.fields['students'].queryset = StudentProfile.objects.filter(enrollments__class_batch=source_batch, attendance_records__class_batch=source_batch, attendance_records__status=Attendance.Status.ABSENT).select_related('user').distinct().order_by('user__first_name', 'user__last_name', 'user__email')
+        self.fields['students'].label_from_instance = lambda student: student.user.get_full_name() or student.user.email
+        if self.instance.pk and not self.is_bound:
+            self.initial['students'] = list(self.instance.students.values_list('pk', flat=True))
+
+    def save(self, commit=True):
+        group = super().save(commit=False)
+        group.source_batch = self.source_batch
+        group.created_by = self.created_by
+        if commit:
+            group.save()
+            selected_students = self.cleaned_data.get('students', [])
+            MakeupGroupStudent.objects.filter(group=group).exclude(student__in=selected_students).delete()
+            for student in selected_students:
+                MakeupGroupStudent.objects.get_or_create(group=group, student=student)
+        return group
 
 
 class EnrollmentForm(forms.Form):

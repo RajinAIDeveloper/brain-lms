@@ -2,7 +2,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from .management.commands.seed_demo import DEMO_PASSWORD
-from .models import Assignment, Attendance, ClassBatch, ClassHoliday, ClassSchedule, CurriculumNode, Enrollment, Level, ParentProfile, ParentStudentLink, Question, QuestionBank, StudentProfile, TeacherProfile, Test, TestQuestion, User
+from .models import Assignment, Attendance, ClassActivity, ClassBatch, ClassHoliday, ClassSchedule, ClassSession, CurriculumNode, Enrollment, Level, MakeupGroup, ParentProfile, ParentStudentLink, Question, QuestionBank, StudentProfile, TeacherProfile, Test, TestQuestion, User
 
 
 class AuthenticationAndOnboardingTests(TestCase):
@@ -333,5 +333,32 @@ class AuthenticationAndOnboardingTests(TestCase):
         self.client.logout()
         self.client.login(email='teacher@braingym.local', password=DEMO_PASSWORD)
         self.assertEqual(self.client.get('/dashboard/admin/reports/').status_code, 403)
+
+    def test_admin_plans_daily_coverage_tracks_eligibility_and_makeup_group(self):
+        self.client.login(email='admin@braingym.local', password=DEMO_PASSWORD)
+        batch = ClassBatch.objects.get(name='Batch A')
+        schedule = ClassSchedule.objects.filter(class_batch=batch, weekday=1).first()
+        if not schedule:
+            schedule = ClassSchedule.objects.create(class_batch=batch, weekday=1, start_time='17:30', end_time='18:40')
+        node = CurriculumNode.objects.create(level=batch.level, title='Carry addition', node_type=CurriculumNode.NodeType.TOPIC, parent=CurriculumNode.objects.create(level=batch.level, title='Arithmetic', node_type=CurriculumNode.NodeType.SUBJECT))
+        planned = self.client.post(f'/dashboard/admin/classes/{batch.pk}/sessions/new/', {'schedule': schedule.pk, 'date': '2026-02-03', 'curriculum_node': node.pk, 'learning_objective': 'Add with carry', 'acceptance_criteria': '8 of 10 correct', 'summary': 'Introduced regrouping', 'is_completed': 'on'})
+        self.assertRedirects(planned, f'/dashboard/admin/classes/{batch.pk}/')
+        session = ClassSession.objects.get(class_batch=batch, date='2026-02-03')
+        self.assertEqual(session.curriculum_node_id, node.pk)
+        student = User.objects.get(email='student@braingym.local')
+        Attendance.objects.update_or_create(class_batch=batch, student=student.student_profile, date='2026-02-03', defaults={'status': Attendance.Status.ABSENT, 'recorded_by': User.objects.get(email='admin@braingym.local')})
+        assignment = Assignment.objects.create(node=node, title='Carry homework', created_by=User.objects.get(email='admin@braingym.local'))
+        linked = self.client.post(f'/dashboard/admin/classes/{batch.pk}/activities/new/', {'assignment': assignment.pk, 'test': '', 'required_attendance_percent': 80})
+        self.assertRedirects(linked, f'/dashboard/admin/classes/{batch.pk}/')
+        self.assertTrue(ClassActivity.objects.filter(class_batch=batch, assignment=assignment).exists())
+        report = self.client.get('/dashboard/admin/reports/')
+        self.assertContains(report, 'Missed curriculum coverage')
+        self.assertContains(report, 'Carry addition')
+        group_page = self.client.get(f'/dashboard/admin/makeup-groups/new/?batch={batch.pk}')
+        self.assertEqual(group_page.status_code, 200)
+        created = self.client.post(f'/dashboard/admin/makeup-groups/new/?batch={batch.pk}', {'source_batch': batch.pk, 'name': 'Carry recovery', 'teacher': batch.teacher.pk, 'scheduled_date': '2026-02-05', 'start_time': '17:30', 'end_time': '18:30', 'notes': 'Recover carry addition', 'students': [student.student_profile.pk], 'is_active': 'on'})
+        group = MakeupGroup.objects.get(name='Carry recovery')
+        self.assertRedirects(created, f'/dashboard/admin/makeup-groups/{group.pk}/')
+        self.assertTrue(group.students.filter(pk=student.student_profile.pk).exists())
 
 # Create your tests here.

@@ -5,11 +5,11 @@ from functools import wraps
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
-from django.db.models import Avg, Count, Q
+from django.db.models import F, Avg, Count, Q
 from django.db.models.deletion import ProtectedError
 from django.shortcuts import redirect, render
 
-from .models import Assignment, Attendance, ClassBatch, ClassHoliday, ClassSchedule, CurriculumNode, Enrollment, Level, LevelPromotion, ParentStudentLink, Question, QuestionBank, StudentProfile, Test, TestAttempt, TestQuestion, User
+from .models import Assignment, Attendance, ClassActivity, ClassBatch, ClassHoliday, ClassSchedule, ClassSession, CurriculumNode, Enrollment, Level, LevelPromotion, MakeupGroup, MakeupGroupStudent, ParentStudentLink, Question, QuestionBank, StudentProfile, Test, TestAttempt, TestQuestion, User
 from .forms import (
     AdminAccountCreationForm,
     ParentAccountCreationForm,
@@ -20,6 +20,8 @@ from .forms import (
     ClassBatchForm,
     ClassHolidayForm,
     ClassScheduleForm,
+    ClassActivityForm,
+    ClassSessionForm,
     AssignmentForm,
     CurriculumNodeForm,
     EnrollmentForm,
@@ -28,6 +30,7 @@ from .forms import (
     StudentPromotionForm,
     QuestionBankForm,
     QuestionForm,
+    MakeupGroupForm,
     TestForm,
     TestQuestionForm,
     TeacherAccountCreationForm,
@@ -134,6 +137,18 @@ def _node_or_404(pk):
     if not node:
         raise PermissionDenied
     return node
+
+
+def _student_activity_eligibility(profile):
+    rows = []
+    for enrollment in profile.enrollments.select_related('class_batch').all():
+        records = Attendance.objects.filter(class_batch=enrollment.class_batch, student=profile)
+        total = records.count()
+        attended = records.filter(status__in=[Attendance.Status.PRESENT, Attendance.Status.LATE]).count()
+        percentage = round(attended * 100 / total) if total else 0
+        for activity in enrollment.class_batch.activities.select_related('assignment', 'test').all():
+            rows.append({'activity': activity, 'class_batch': enrollment.class_batch, 'attendance_percent': percentage, 'eligible': percentage >= activity.required_attendance_percent})
+    return rows
 
 
 @role_required(User.Role.ADMIN)
@@ -378,20 +393,35 @@ def admin_reports(request):
         attendance_total = attendance_qs.count()
         attendance_attended = attendance_qs.filter(status__in=[Attendance.Status.PRESENT, Attendance.Status.LATE]).count()
         attempt_stats = TestAttempt.objects.filter(student=profile).aggregate(test_count=Count('id'), average_score=Avg('score'), average_accuracy=Avg('accuracy'))
-        student_rows.append({'profile': profile, 'enrollment': active_enrollment, 'attendance_percent': round(attendance_attended * 100 / attendance_total) if attendance_total else 0, 'attendance_total': attendance_total, 'test_count': attempt_stats['test_count'] or 0, 'average_score': round(attempt_stats['average_accuracy']) if attempt_stats['average_accuracy'] is not None else None})
+        missed_sessions = list(ClassSession.objects.filter(class_batch__enrollments__student=profile).select_related('class_batch', 'curriculum_node', 'schedule').filter(class_batch__attendance_records__student=profile, class_batch__attendance_records__status=Attendance.Status.ABSENT, class_batch__attendance_records__date=F('date')).distinct().order_by('-date'))
+        student_rows.append({'profile': profile, 'enrollment': active_enrollment, 'attendance_percent': round(attendance_attended * 100 / attendance_total) if attendance_total else 0, 'attendance_total': attendance_total, 'test_count': attempt_stats['test_count'] or 0, 'average_score': round(attempt_stats['average_accuracy']) if attempt_stats['average_accuracy'] is not None else None, 'missed_sessions': missed_sessions})
 
     classes_qs = ClassBatch.objects.select_related('level', 'teacher').prefetch_related('enrollments__student__user')
     if level_id:
         classes_qs = classes_qs.filter(level_id=level_id)
     class_rows = []
+    activity_rows = []
     for batch in classes_qs.order_by('level__code', 'name'):
         attendance_qs = Attendance.objects.filter(class_batch=batch)
         total = attendance_qs.count()
         attended = attendance_qs.filter(status__in=[Attendance.Status.PRESENT, Attendance.Status.LATE]).count()
         class_rows.append({'batch': batch, 'active_students': batch.enrollments.filter(is_active=True).count(), 'attendance_percent': round(attended * 100 / total) if total else 0, 'attendance_total': total})
+        for activity in batch.activities.select_related('assignment', 'test').all():
+            eligible = 0
+            student_total = 0
+            for enrollment in batch.enrollments.filter(is_active=True).select_related('student'):
+                student_total += 1
+                records = Attendance.objects.filter(class_batch=batch, student=enrollment.student)
+                record_total = records.count()
+                present = records.filter(status__in=[Attendance.Status.PRESENT, Attendance.Status.LATE]).count()
+                percentage = present * 100 / record_total if record_total else 0
+                if percentage >= activity.required_attendance_percent:
+                    eligible += 1
+            activity_rows.append({'activity': activity, 'batch': batch, 'eligible': eligible, 'student_total': student_total})
     levels = Level.objects.order_by('code')
     tests = Test.objects.select_related('node__level').annotate(question_total=Count('test_questions')).order_by('-created_at')[:8]
-    return render(request, 'dashboard/reports.html', {'dashboard_role': 'Admin', 'eyebrow': 'Academy reports', 'student_rows': student_rows, 'class_rows': class_rows, 'tests': tests, 'levels': levels, 'selected_level': level_id})
+    makeup_groups = MakeupGroup.objects.select_related('source_batch', 'teacher').prefetch_related('students__user').order_by('-created_at')[:8]
+    return render(request, 'dashboard/reports.html', {'dashboard_role': 'Admin', 'eyebrow': 'Academy reports', 'student_rows': student_rows, 'class_rows': class_rows, 'activity_rows': activity_rows, 'tests': tests, 'levels': levels, 'selected_level': level_id, 'makeup_groups': makeup_groups})
 
 
 @role_required(User.Role.ADMIN)
@@ -401,6 +431,65 @@ def test_list(request):
     if query:
         tests = tests.filter(Q(title__icontains=query) | Q(node__title__icontains=query) | Q(node__level__code__icontains=query))
     return render(request, 'dashboard/curriculum/tests.html', {'dashboard_role': 'Admin', 'eyebrow': 'Tests', 'tests': tests, 'query': query})
+
+
+@role_required(User.Role.ADMIN)
+def makeup_group_create(request):
+    batch_id = request.GET.get('batch') or request.POST.get('source_batch')
+    batches = ClassBatch.objects.select_related('level', 'teacher').order_by('level__code', 'name')
+    batch = batches.filter(pk=batch_id).first() if batch_id else None
+    if not batch:
+        return render(request, 'dashboard/makeup_groups/choose_batch.html', {'dashboard_role': 'Admin', 'eyebrow': 'Makeup groups', 'batches': batches})
+    form = MakeupGroupForm(request.POST or None, source_batch=batch, created_by=request.user)
+    if request.method == 'POST' and form.is_valid():
+        group = form.save()
+        messages.success(request, f'Makeup group {group.name} created.')
+        return redirect('accounts:makeup_group_detail', pk=group.pk)
+    return render(request, 'dashboard/makeup_groups/form.html', {'dashboard_role': 'Admin', 'eyebrow': 'Makeup groups', 'batch': batch, 'form': form, 'mode': 'Create', 'group': None})
+
+
+@role_required(User.Role.ADMIN)
+def makeup_group_detail(request, pk):
+    group = MakeupGroup.objects.filter(pk=pk).select_related('source_batch__level', 'teacher').prefetch_related('students__user', 'memberships__student__user').first()
+    if not group:
+        raise PermissionDenied
+    return render(request, 'dashboard/makeup_groups/detail.html', {'dashboard_role': 'Admin', 'eyebrow': 'Makeup groups', 'group': group})
+
+
+@role_required(User.Role.ADMIN)
+def makeup_group_edit(request, pk):
+    group = MakeupGroup.objects.filter(pk=pk).select_related('source_batch__level', 'teacher').first()
+    if not group:
+        raise PermissionDenied
+    form = MakeupGroupForm(request.POST or None, instance=group, source_batch=group.source_batch, created_by=request.user)
+    if request.method == 'POST' and form.is_valid():
+        form.save()
+        messages.success(request, 'Makeup group updated.')
+        return redirect('accounts:makeup_group_detail', pk=group.pk)
+    return render(request, 'dashboard/makeup_groups/form.html', {'dashboard_role': 'Admin', 'eyebrow': 'Makeup groups', 'batch': group.source_batch, 'form': form, 'mode': 'Edit', 'group': group})
+
+
+@role_required(User.Role.ADMIN)
+def makeup_group_delete(request, pk):
+    group = MakeupGroup.objects.filter(pk=pk).first()
+    if not group:
+        raise PermissionDenied
+    if request.method == 'POST':
+        group.delete()
+        messages.success(request, 'Makeup group deleted.')
+        return redirect('accounts:admin_reports')
+    return render(request, 'dashboard/makeup_groups/delete.html', {'dashboard_role': 'Admin', 'eyebrow': 'Makeup groups', 'group': group})
+
+
+@role_required(User.Role.ADMIN)
+def makeup_group_remove_student(request, pk, student_id):
+    membership = MakeupGroupStudent.objects.filter(group_id=pk, student_id=student_id).first()
+    if not membership:
+        raise PermissionDenied
+    if request.method == 'POST':
+        membership.delete()
+        messages.success(request, 'Student removed from the makeup group.')
+    return redirect('accounts:makeup_group_detail', pk=pk)
 
 
 @role_required(User.Role.ADMIN)
@@ -454,15 +543,89 @@ def batch_create(request):
 
 @role_required(User.Role.ADMIN)
 def batch_detail(request, pk):
-    batch = ClassBatch.objects.filter(pk=pk).select_related('level', 'teacher').prefetch_related('enrollments__student__user', 'enrollments__student__current_level', 'schedules', 'holidays').annotate(active_enrollment_count=Count('enrollments', filter=Q(enrollments__is_active=True))).first()
+    batch = ClassBatch.objects.filter(pk=pk).select_related('level', 'teacher').prefetch_related('enrollments__student__user', 'enrollments__student__current_level', 'schedules', 'holidays', 'sessions__schedule', 'sessions__curriculum_node', 'activities__assignment', 'activities__test').annotate(active_enrollment_count=Count('enrollments', filter=Q(enrollments__is_active=True))).first()
     if not batch:
         raise PermissionDenied
     enrollment_form = EnrollmentForm(batch=batch)
-    return render(request, 'dashboard/batches/detail.html', {'dashboard_role': 'Admin', 'eyebrow': 'Academic structure', 'batch': batch, 'enrollment_form': enrollment_form, 'schedule_form': ClassScheduleForm(batch=batch), 'holiday_form': ClassHolidayForm(batch=batch)})
+    return render(request, 'dashboard/batches/detail.html', {'dashboard_role': 'Admin', 'eyebrow': 'Academic structure', 'batch': batch, 'enrollment_form': enrollment_form, 'schedule_form': ClassScheduleForm(batch=batch), 'holiday_form': ClassHolidayForm(batch=batch), 'session_form': ClassSessionForm(batch=batch), 'activity_form': ClassActivityForm(batch=batch, created_by=request.user)})
 
 
-def _batch_schedule_context(batch, schedule_form=None, holiday_form=None, enrollment_form=None):
-    return {'dashboard_role': 'Admin', 'eyebrow': 'Academic structure', 'batch': batch, 'enrollment_form': enrollment_form or EnrollmentForm(batch=batch), 'schedule_form': schedule_form or ClassScheduleForm(batch=batch), 'holiday_form': holiday_form or ClassHolidayForm(batch=batch)}
+def _batch_schedule_context(batch, schedule_form=None, holiday_form=None, enrollment_form=None, session_form=None, activity_form=None):
+    return {'dashboard_role': 'Admin', 'eyebrow': 'Academic structure', 'batch': batch, 'enrollment_form': enrollment_form or EnrollmentForm(batch=batch), 'schedule_form': schedule_form or ClassScheduleForm(batch=batch), 'holiday_form': holiday_form or ClassHolidayForm(batch=batch), 'session_form': session_form or ClassSessionForm(batch=batch), 'activity_form': activity_form or ClassActivityForm(batch=batch, created_by=batch.teacher)}
+
+
+@role_required(User.Role.ADMIN)
+def batch_add_session(request, pk):
+    batch = ClassBatch.objects.filter(pk=pk).select_related('level', 'teacher').first()
+    if not batch:
+        raise PermissionDenied
+    form = ClassSessionForm(request.POST or None, batch=batch)
+    if request.method == 'POST' and form.is_valid():
+        session = form.save()
+        messages.success(request, f'Lesson plan added for {session.date:%d %b %Y}.')
+        return redirect('accounts:batch_detail', pk=batch.pk)
+    return render(request, 'dashboard/batches/session_form.html', {'dashboard_role': 'Admin', 'eyebrow': 'Daily lesson plan', 'batch': batch, 'form': form, 'mode': 'Add'})
+
+
+@role_required(User.Role.ADMIN)
+def batch_edit_session(request, pk, session_id):
+    session = ClassSession.objects.filter(pk=session_id, class_batch_id=pk).select_related('class_batch__level', 'class_batch__teacher', 'schedule').first()
+    if not session:
+        raise PermissionDenied
+    form = ClassSessionForm(request.POST or None, instance=session, batch=session.class_batch)
+    if request.method == 'POST' and form.is_valid():
+        form.save()
+        messages.success(request, 'Daily lesson plan updated.')
+        return redirect('accounts:batch_detail', pk=pk)
+    return render(request, 'dashboard/batches/session_form.html', {'dashboard_role': 'Admin', 'eyebrow': 'Daily lesson plan', 'batch': session.class_batch, 'form': form, 'mode': 'Edit', 'session': session})
+
+
+@role_required(User.Role.ADMIN)
+def batch_delete_session(request, pk, session_id):
+    session = ClassSession.objects.filter(pk=session_id, class_batch_id=pk).first()
+    if not session:
+        raise PermissionDenied
+    if request.method == 'POST':
+        session.delete()
+        messages.success(request, 'Daily lesson plan removed.')
+    return redirect('accounts:batch_detail', pk=pk)
+
+
+@role_required(User.Role.ADMIN)
+def batch_add_activity(request, pk):
+    batch = ClassBatch.objects.filter(pk=pk).select_related('level', 'teacher').first()
+    if not batch:
+        raise PermissionDenied
+    form = ClassActivityForm(request.POST or None, batch=batch, created_by=request.user)
+    if request.method == 'POST' and form.is_valid():
+        activity = form.save()
+        messages.success(request, f'{activity.title} is now linked to this class with attendance eligibility.')
+        return redirect('accounts:batch_detail', pk=batch.pk)
+    return render(request, 'dashboard/batches/activity_form.html', {'dashboard_role': 'Admin', 'eyebrow': 'Class eligibility', 'batch': batch, 'form': form, 'mode': 'Add'})
+
+
+@role_required(User.Role.ADMIN)
+def batch_edit_activity(request, pk, activity_id):
+    activity = ClassActivity.objects.filter(pk=activity_id, class_batch_id=pk).select_related('class_batch__level', 'assignment', 'test').first()
+    if not activity:
+        raise PermissionDenied
+    form = ClassActivityForm(request.POST or None, instance=activity, batch=activity.class_batch, created_by=request.user)
+    if request.method == 'POST' and form.is_valid():
+        form.save()
+        messages.success(request, 'Class eligibility rule updated.')
+        return redirect('accounts:batch_detail', pk=pk)
+    return render(request, 'dashboard/batches/activity_form.html', {'dashboard_role': 'Admin', 'eyebrow': 'Class eligibility', 'batch': activity.class_batch, 'form': form, 'mode': 'Edit', 'activity': activity})
+
+
+@role_required(User.Role.ADMIN)
+def batch_delete_activity(request, pk, activity_id):
+    activity = ClassActivity.objects.filter(pk=activity_id, class_batch_id=pk).first()
+    if not activity:
+        raise PermissionDenied
+    if request.method == 'POST':
+        activity.delete()
+        messages.success(request, 'Class activity removed.')
+    return redirect('accounts:batch_detail', pk=pk)
 
 
 @role_required(User.Role.ADMIN)
@@ -570,8 +733,9 @@ def batch_roster(request, pk):
     attendance = {}
     if selected:
         attendance = {record.student_id: record.status for record in Attendance.objects.filter(class_batch=batch, date=selected)}
+    selected_sessions = ClassSession.objects.filter(class_batch=batch, date=selected).select_related('schedule', 'curriculum_node') if selected else ClassSession.objects.none()
     roster_students = [{'student': enrollment.student, 'status': attendance.get(enrollment.student_id, '')} for enrollment in active_enrollments]
-    return render(request, 'dashboard/batches/roster.html', {'dashboard_role': 'Admin', 'eyebrow': 'Attendance roster', 'batch': batch, 'weeks': weeks, 'month_label': date(year, month, 1).strftime('%B %Y'), 'month_value': f'{year:04d}-{month:02d}', 'selected': selected, 'selected_schedule': selected_schedule, 'selected_holiday': holidays.get(selected) if selected else None, 'roster_students': roster_students, 'attendance_choices': Attendance.Status.choices, 'previous_month': f'{year - 1 if month == 1 else year:04d}-{12 if month == 1 else month - 1:02d}', 'next_month': f'{year + 1 if month == 12 else year:04d}-{1 if month == 12 else month + 1:02d}'})
+    return render(request, 'dashboard/batches/roster.html', {'dashboard_role': 'Admin', 'eyebrow': 'Attendance roster', 'batch': batch, 'weeks': weeks, 'month_label': date(year, month, 1).strftime('%B %Y'), 'month_value': f'{year:04d}-{month:02d}', 'selected': selected, 'selected_schedule': selected_schedule, 'selected_sessions': selected_sessions, 'selected_holiday': holidays.get(selected) if selected else None, 'roster_students': roster_students, 'attendance_choices': Attendance.Status.choices, 'previous_month': f'{year - 1 if month == 1 else year:04d}-{12 if month == 1 else month - 1:02d}', 'next_month': f'{year + 1 if month == 12 else year:04d}-{1 if month == 12 else month + 1:02d}'})
 
 
 @role_required(User.Role.ADMIN)
@@ -762,7 +926,8 @@ def student_detail(request, pk):
         total = records.count()
         attended = records.filter(status__in=[Attendance.Status.PRESENT, Attendance.Status.LATE]).count()
         enrollment_rows.append({'enrollment': enrollment, 'attendance_total': total, 'attendance_attended': attended, 'attendance_percent': round(attended * 100 / total) if total else 0})
-    return render(request, 'dashboard/students/detail.html', {'dashboard_role': 'Admin', 'eyebrow': 'People and access', 'student': student, 'enrollment_rows': enrollment_rows, 'promotion_form': StudentPromotionForm(student=student), 'status_choices': Enrollment.Status.choices})
+    missed_sessions = ClassSession.objects.filter(class_batch__enrollments__student=student.student_profile, class_batch__attendance_records__student=student.student_profile, class_batch__attendance_records__status=Attendance.Status.ABSENT, class_batch__attendance_records__date=F('date')).select_related('class_batch', 'curriculum_node', 'schedule').distinct().order_by('-date')
+    return render(request, 'dashboard/students/detail.html', {'dashboard_role': 'Admin', 'eyebrow': 'People and access', 'student': student, 'enrollment_rows': enrollment_rows, 'missed_sessions': missed_sessions, 'activity_rows': _student_activity_eligibility(student.student_profile), 'promotion_form': StudentPromotionForm(student=student), 'status_choices': Enrollment.Status.choices})
 
 
 @role_required(User.Role.ADMIN)
@@ -788,7 +953,8 @@ def student_promote(request, pk):
         total = records.count()
         attended = records.filter(status__in=[Attendance.Status.PRESENT, Attendance.Status.LATE]).count()
         enrollment_rows.append({'enrollment': enrollment, 'attendance_total': total, 'attendance_attended': attended, 'attendance_percent': round(attended * 100 / total) if total else 0})
-    return render(request, 'dashboard/students/detail.html', {'dashboard_role': 'Admin', 'eyebrow': 'People and access', 'student': student, 'enrollment_rows': enrollment_rows, 'promotion_form': form, 'status_choices': Enrollment.Status.choices})
+    missed_sessions = ClassSession.objects.filter(class_batch__enrollments__student=student.student_profile, class_batch__attendance_records__student=student.student_profile, class_batch__attendance_records__status=Attendance.Status.ABSENT, class_batch__attendance_records__date=F('date')).select_related('class_batch', 'curriculum_node', 'schedule').distinct().order_by('-date')
+    return render(request, 'dashboard/students/detail.html', {'dashboard_role': 'Admin', 'eyebrow': 'People and access', 'student': student, 'enrollment_rows': enrollment_rows, 'missed_sessions': missed_sessions, 'activity_rows': _student_activity_eligibility(student.student_profile), 'promotion_form': form, 'status_choices': Enrollment.Status.choices})
 
 
 @role_required(User.Role.ADMIN)
