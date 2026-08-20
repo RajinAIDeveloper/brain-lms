@@ -1,6 +1,8 @@
+from datetime import date
+
 from django import forms
 
-from .models import ClassBatch, ClassHoliday, ClassSchedule, Enrollment, Level, ParentStudentLink, StudentProfile, User
+from .models import ClassBatch, ClassHoliday, ClassSchedule, Enrollment, Level, LevelPromotion, ParentStudentLink, StudentProfile, User
 
 
 class AdminAccountCreationForm(forms.ModelForm):
@@ -289,8 +291,43 @@ class EnrollmentForm(forms.Form):
 
     def save(self):
         student = self.cleaned_data['student']
-        Enrollment.objects.filter(student=student, is_active=True).exclude(class_batch=self.batch).update(is_active=False)
-        enrollment, _ = Enrollment.objects.update_or_create(student=student, class_batch=self.batch, defaults={'is_active': True})
+        Enrollment.objects.filter(student=student, is_active=True).exclude(class_batch=self.batch).update(is_active=False, status=Enrollment.Status.LEFT, ended_on=date.today())
+        enrollment, _ = Enrollment.objects.update_or_create(student=student, class_batch=self.batch, defaults={'is_active': True, 'status': Enrollment.Status.ONGOING, 'ended_on': None})
         student.current_level = self.batch.level
         student.save(update_fields=['current_level'])
         return enrollment
+
+
+class StudentPromotionForm(forms.Form):
+    to_level = forms.ModelChoiceField(queryset=Level.objects.all(), label='Promote to level')
+    note = forms.CharField(max_length=240, required=False, label='Promotion note', widget=forms.TextInput(attrs={'placeholder': 'Passed Level 2 assessment'}))
+
+    def __init__(self, *args, student, **kwargs):
+        self.student = student
+        super().__init__(*args, **kwargs)
+        if student.student_profile.current_level_id:
+            self.fields['to_level'].queryset = Level.objects.exclude(pk=student.student_profile.current_level_id)
+
+    def clean_to_level(self):
+        level = self.cleaned_data['to_level']
+        if self.student.student_profile.current_level_id == level.pk:
+            raise forms.ValidationError('The student is already at this level.')
+        return level
+
+
+class EnrollmentStatusForm(forms.Form):
+    status = forms.ChoiceField(choices=Enrollment.Status.choices, label='Class status')
+
+    def __init__(self, *args, enrollment, **kwargs):
+        self.enrollment = enrollment
+        super().__init__(*args, **kwargs)
+        if not self.is_bound:
+            self.initial['status'] = enrollment.status
+
+    def save(self):
+        status = self.cleaned_data['status']
+        self.enrollment.status = status
+        self.enrollment.is_active = status == Enrollment.Status.ONGOING
+        self.enrollment.ended_on = None if self.enrollment.is_active else date.today()
+        self.enrollment.save(update_fields=['status', 'is_active', 'ended_on'])
+        return self.enrollment

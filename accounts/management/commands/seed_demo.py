@@ -1,8 +1,8 @@
-from datetime import date
+from datetime import date, time
 
 from django.core.management.base import BaseCommand
 
-from accounts.models import ClassBatch, Enrollment, Level, ParentProfile, ParentStudentLink, StudentProfile, TeacherProfile, User
+from accounts.models import ClassBatch, ClassSchedule, Enrollment, Level, ParentProfile, ParentStudentLink, StudentProfile, TeacherProfile, User
 
 
 DEMO_PASSWORD = 'BrainGymMVP!2026'
@@ -43,6 +43,12 @@ class Command(BaseCommand):
         class_batch.end_date = date(2026, 12, 31)
         class_batch.is_active = True
         class_batch.save()
+        tuesday, _ = ClassSchedule.objects.get_or_create(class_batch=class_batch, weekday=ClassSchedule.Weekday.TUESDAY, start_time=time(17, 30), defaults={'end_time': time(18, 40)})
+        tuesday.end_time = time(18, 40)
+        tuesday.save()
+        thursday, _ = ClassSchedule.objects.get_or_create(class_batch=class_batch, weekday=ClassSchedule.Weekday.THURSDAY, start_time=time(19, 30), defaults={'end_time': time(20, 50)})
+        thursday.end_time = time(20, 50)
+        thursday.save()
         Enrollment.objects.get_or_create(student=student_profile, class_batch=class_batch, defaults={'is_active': True})
         ParentStudentLink.objects.get_or_create(parent=parent_profile, student=student_profile, defaults={'relationship': 'Parent'})
 

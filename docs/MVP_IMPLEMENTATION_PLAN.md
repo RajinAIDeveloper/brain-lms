@@ -61,7 +61,7 @@ Use Django model names equivalent to the following. Add normal audit fields (`cr
 | --- | --- | --- |
 | Identity | `User`, `Profile` | Custom user from the first migration; one role per MVP user |
 | People | `TeacherProfile`, `StudentProfile`, `ParentProfile`, `ParentStudentLink` | Parent can be linked to one or more students |
-| Academics | `Curriculum`, `Level`, `Lesson`, `ClassBatch`, `Enrollment` | A batch has one teacher; active enrolment identifies student's current class |
+| Academics | `Curriculum`, `Level`, `Lesson`, `ClassBatch`, `ClassSchedule`, `ClassHoliday`, `Enrollment`, `LevelPromotion`, `Attendance` | A batch has one teacher, date range, weekly schedule, and holiday exceptions; enrollment history identifies class status and attendance |
 | Content | `QuestionBank`, `Question`, `Exercise`, `ExerciseQuestion`, `Test`, `TestQuestion` | Questions have topic, difficulty, type, correct answer, explanation, time target |
 | Assignment | `Assignment` | Type, target class or students, due date, status, created by teacher/admin |
 | Learning | `PracticeSession`, `TestAttempt`, `Answer` | Persist question order, submitted answer, correctness, response duration, aggregate results |

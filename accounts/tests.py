@@ -2,7 +2,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from .management.commands.seed_demo import DEMO_PASSWORD
-from .models import ClassBatch, ClassHoliday, ClassSchedule, Enrollment, Level, ParentProfile, ParentStudentLink, StudentProfile, TeacherProfile, User
+from .models import Attendance, ClassBatch, ClassHoliday, ClassSchedule, Enrollment, Level, ParentProfile, ParentStudentLink, StudentProfile, TeacherProfile, User
 
 
 class AuthenticationAndOnboardingTests(TestCase):
@@ -227,10 +227,8 @@ class AuthenticationAndOnboardingTests(TestCase):
         self.client.login(email='admin@braingym.local', password=DEMO_PASSWORD)
         batch = ClassBatch.objects.get(name='Batch A')
         self.assertEqual(self.client.get(f'/dashboard/admin/classes/{batch.pk}/').status_code, 200)
-        tuesday = self.client.post(f'/dashboard/admin/classes/{batch.pk}/schedule/new/', {'weekday': 1, 'start_time': '17:30', 'end_time': '18:40'})
-        self.assertRedirects(tuesday, f'/dashboard/admin/classes/{batch.pk}/')
-        thursday = self.client.post(f'/dashboard/admin/classes/{batch.pk}/schedule/new/', {'weekday': 3, 'start_time': '19:30', 'end_time': '20:50'})
-        self.assertRedirects(thursday, f'/dashboard/admin/classes/{batch.pk}/')
+        ClassSchedule.objects.get_or_create(class_batch=batch, weekday=1, start_time='17:30', defaults={'end_time': '18:40'})
+        ClassSchedule.objects.get_or_create(class_batch=batch, weekday=3, start_time='19:30', defaults={'end_time': '20:50'})
         self.assertEqual(ClassSchedule.objects.filter(class_batch=batch).count(), 2)
         overlap = self.client.post(f'/dashboard/admin/classes/{batch.pk}/schedule/new/', {'weekday': 1, 'start_time': '18:00', 'end_time': '19:00'})
         self.assertEqual(overlap.status_code, 200)
@@ -249,5 +247,37 @@ class AuthenticationAndOnboardingTests(TestCase):
         remove_holiday = self.client.post(f'/dashboard/admin/classes/{batch.pk}/holiday/{holiday_record.pk}/delete/')
         self.assertRedirects(remove_holiday, f'/dashboard/admin/classes/{batch.pk}/')
         self.assertFalse(ClassHoliday.objects.filter(pk=holiday_record.pk).exists())
+
+    def test_admin_promotes_student_and_records_class_status(self):
+        self.client.login(email='admin@braingym.local', password=DEMO_PASSWORD)
+        student = User.objects.get(email='student@braingym.local')
+        next_level = Level.objects.create(name='Level 3', code='L3')
+        promotion = self.client.post(f'/dashboard/admin/students/{student.pk}/promote/', {'to_level': next_level.pk, 'note': 'Passed assessment'})
+        self.assertRedirects(promotion, f'/dashboard/admin/students/{student.pk}/')
+        student.student_profile.refresh_from_db()
+        self.assertEqual(student.student_profile.current_level_id, next_level.pk)
+        self.assertEqual(student.student_profile.promotions.count(), 1)
+        enrollment = student.student_profile.enrollments.first()
+        status = self.client.post(f'/dashboard/admin/students/{student.pk}/enrollments/{enrollment.pk}/status/', {'status': Enrollment.Status.COMPLETED})
+        self.assertRedirects(status, f'/dashboard/admin/students/{student.pk}/')
+        enrollment.refresh_from_db()
+        self.assertEqual(enrollment.status, Enrollment.Status.COMPLETED)
+        self.assertFalse(enrollment.is_active)
+
+    def test_monthly_roster_records_attendance_for_scheduled_date(self):
+        self.client.login(email='admin@braingym.local', password=DEMO_PASSWORD)
+        batch = ClassBatch.objects.get(name='Batch A')
+        ClassSchedule.objects.get_or_create(class_batch=batch, weekday=1, start_time='17:30', defaults={'end_time': '18:40'})
+        roster = self.client.get(f'/dashboard/admin/classes/{batch.pk}/roster/?month=2026-02&date=2026-02-03')
+        self.assertEqual(roster.status_code, 200)
+        self.assertContains(roster, 'Attendance')
+        student = User.objects.get(email='student@braingym.local')
+        saved = self.client.post(f'/dashboard/admin/classes/{batch.pk}/roster/attendance/', {'date': '2026-02-03', f'status_{student.student_profile.pk}': Attendance.Status.PRESENT})
+        self.assertRedirects(saved, f'/dashboard/admin/classes/{batch.pk}/roster/?month=2026-02&date=2026-02-03')
+        record = Attendance.objects.get(class_batch=batch, student=student.student_profile, date='2026-02-03')
+        self.assertEqual(record.status, Attendance.Status.PRESENT)
+        holiday = ClassHoliday.objects.create(class_batch=batch, date='2026-02-10', note='Holiday')
+        holiday_roster = self.client.get(f'/dashboard/admin/classes/{batch.pk}/roster/?month=2026-02&date=2026-02-10')
+        self.assertContains(holiday_roster, 'HOLIDAY')
 
 # Create your tests here.

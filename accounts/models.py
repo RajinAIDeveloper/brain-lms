@@ -143,6 +143,21 @@ class StudentProfile(models.Model):
         return str(self.user)
 
 
+class LevelPromotion(models.Model):
+    student = models.ForeignKey(StudentProfile, on_delete=models.CASCADE, related_name='promotions')
+    from_level = models.ForeignKey(Level, on_delete=models.PROTECT, related_name='promotions_from', null=True, blank=True)
+    to_level = models.ForeignKey(Level, on_delete=models.PROTECT, related_name='promotions_to')
+    promoted_on = models.DateField(auto_now_add=True)
+    promoted_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='level_promotions')
+    note = models.CharField(max_length=240, blank=True)
+
+    class Meta:
+        ordering = ['-promoted_on', '-pk']
+
+    def __str__(self):
+        return f'{self.student} promoted to {self.to_level.code}'
+
+
 class ParentProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='parent_profile')
 
@@ -163,10 +178,17 @@ class ParentStudentLink(models.Model):
 
 
 class Enrollment(models.Model):
+    class Status(models.TextChoices):
+        ONGOING = 'ONGOING', 'Ongoing'
+        COMPLETED = 'COMPLETED', 'Completed'
+        LEFT = 'LEFT', 'Left'
+
     student = models.ForeignKey(StudentProfile, on_delete=models.CASCADE, related_name='enrollments')
     class_batch = models.ForeignKey(ClassBatch, on_delete=models.CASCADE, related_name='enrollments')
     is_active = models.BooleanField(default=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.ONGOING)
     enrolled_on = models.DateField(auto_now_add=True)
+    ended_on = models.DateField(null=True, blank=True)
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=['student', 'class_batch'], name='unique_student_class')]
@@ -174,5 +196,31 @@ class Enrollment(models.Model):
 
     def __str__(self):
         return f'{self.student} in {self.class_batch}'
+
+
+class Attendance(models.Model):
+    class Status(models.TextChoices):
+        PRESENT = 'PRESENT', 'Present'
+        ABSENT = 'ABSENT', 'Absent'
+        LATE = 'LATE', 'Late'
+        EXCUSED = 'EXCUSED', 'Excused'
+
+    class_batch = models.ForeignKey(ClassBatch, on_delete=models.CASCADE, related_name='attendance_records')
+    student = models.ForeignKey(StudentProfile, on_delete=models.CASCADE, related_name='attendance_records')
+    date = models.DateField()
+    status = models.CharField(max_length=20, choices=Status.choices)
+    recorded_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='recorded_attendance')
+    recorded_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-date', 'student__user__last_name']
+        constraints = [models.UniqueConstraint(fields=['class_batch', 'student', 'date'], name='unique_attendance_per_class_student_date')]
+
+    def clean(self):
+        if not Enrollment.objects.filter(student=self.student, class_batch=self.class_batch).exists():
+            raise ValidationError({'student': 'The student must be enrolled in this class before attendance can be recorded.'})
+
+    def __str__(self):
+        return f'{self.student} · {self.date} · {self.get_status_display()}'
 
 # Create your models here.

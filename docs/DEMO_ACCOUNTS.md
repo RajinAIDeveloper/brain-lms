@@ -11,7 +11,7 @@ All four demo users use the password `BrainGymMVP!2026`:
 | Role | Email | Seeded relationships |
 | --- | --- | --- |
 | Admin | `admin@braingym.local` | Staff/superuser; full admin access |
-| Teacher | `teacher@braingym.local` | Assigned to Level 2 · Batch A |
+| Teacher | `teacher@braingym.local` | Assigned to Level 2 · Batch A; Tuesday 17:30–18:40 and Thursday 19:30–20:50 |
 | Student | `student@braingym.local` | Enrolled in Level 2 · Batch A; current level L2 |
 | Parent | `parent@braingym.local` | Linked to the demo student |
 

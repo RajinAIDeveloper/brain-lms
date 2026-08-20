@@ -19,6 +19,9 @@
 - Academic management now has sidebar links and full CRUD for levels and classes/batches. Levels can contain many batches; batches assign one teacher and support student enrollment, single-active-class movement, and unenrollment.
 - Applied migration `accounts.0002_alter_enrollment_options` to keep active enrollments first when displaying a student's class context.
 - Classes now support required date-range entry, recurring weekday/time schedules, schedule overlap validation, and date-bounded holidays with add/edit/remove controls. Migration `accounts.0003_classbatch_end_date_classbatch_start_date_and_more` is applied.
+- Students now have level-promotion history and Admin promotion controls. Enrollment history tracks ongoing/completed/left status and ended dates. Attendance records support present, absent, late, and excused states with per-class percentages.
+- Each class has a monthly roster calendar with scheduled-day highlighting, holiday colors, selected-day schedule times, and attendance entry for active students. Migration `accounts.0004_enrollment_ended_on_enrollment_status_levelpromotion_and_more` is applied.
+- Admin can promote students between levels with a promotion history and note. Student and Admin views show enrollment history, ongoing/completed/left class status, attendance counts, and per-class attendance percentages. Demo Batch A includes Tuesday and Thursday weekly schedule examples.
 
 ## Validation command
 
