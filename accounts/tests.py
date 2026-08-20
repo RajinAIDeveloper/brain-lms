@@ -2,7 +2,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from .management.commands.seed_demo import DEMO_PASSWORD
-from .models import Assignment, Attendance, ClassBatch, ClassHoliday, ClassSchedule, CurriculumNode, Enrollment, Level, ParentProfile, ParentStudentLink, Question, QuestionBank, StudentProfile, TeacherProfile, User
+from .models import Assignment, Attendance, ClassBatch, ClassHoliday, ClassSchedule, CurriculumNode, Enrollment, Level, ParentProfile, ParentStudentLink, Question, QuestionBank, StudentProfile, TeacherProfile, Test, TestQuestion, User
 
 
 class AuthenticationAndOnboardingTests(TestCase):
@@ -307,5 +307,31 @@ class AuthenticationAndOnboardingTests(TestCase):
     def test_non_admin_cannot_open_curriculum(self):
         self.client.login(email='teacher@braingym.local', password=DEMO_PASSWORD)
         self.assertEqual(self.client.get('/dashboard/admin/curriculum/').status_code, 403)
+
+    def test_admin_can_create_test_from_level_questions(self):
+        self.client.login(email='admin@braingym.local', password=DEMO_PASSWORD)
+        level = Level.objects.get(code='L2')
+        node = CurriculumNode.objects.create(level=level, title='Speed Math', node_type=CurriculumNode.NodeType.SUBJECT)
+        bank = QuestionBank.objects.create(node=node, name='Speed bank', created_by=User.objects.get(email='admin@braingym.local'))
+        question = Question.objects.create(bank=bank, prompt='3 + 4?', correct_answer='7')
+        response = self.client.post(f'/dashboard/admin/curriculum/nodes/{node.pk}/tests/new/', {'title': 'Speed assessment', 'instructions': 'Complete calmly.', 'duration_minutes': 10, 'passing_score': 70, 'is_published': 'on'})
+        test = Test.objects.get(title='Speed assessment')
+        self.assertRedirects(response, f'/dashboard/admin/tests/{test.pk}/')
+        add_question = self.client.post(f'/dashboard/admin/tests/{test.pk}/questions/new/', {'question': question.pk, 'ordering': 1, 'points': 1})
+        self.assertRedirects(add_question, f'/dashboard/admin/tests/{test.pk}/')
+        self.assertTrue(TestQuestion.objects.filter(test=test, question=question).exists())
+        self.assertContains(self.client.get(f'/dashboard/admin/tests/{test.pk}/'), 'Speed assessment')
+
+    def test_admin_reports_show_students_classes_and_tests(self):
+        self.client.login(email='admin@braingym.local', password=DEMO_PASSWORD)
+        self.assertEqual(self.client.get('/dashboard/admin/tests/').status_code, 200)
+        response = self.client.get('/dashboard/admin/reports/')
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Student performance')
+        self.assertContains(response, 'Class reports')
+        self.assertContains(response, 'student@braingym.local')
+        self.client.logout()
+        self.client.login(email='teacher@braingym.local', password=DEMO_PASSWORD)
+        self.assertEqual(self.client.get('/dashboard/admin/reports/').status_code, 403)
 
 # Create your tests here.

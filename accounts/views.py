@@ -5,11 +5,11 @@ from functools import wraps
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
-from django.db.models import Count, Q
+from django.db.models import Avg, Count, Q
 from django.db.models.deletion import ProtectedError
 from django.shortcuts import redirect, render
 
-from .models import Assignment, Attendance, ClassBatch, ClassHoliday, ClassSchedule, CurriculumNode, Enrollment, Level, LevelPromotion, ParentStudentLink, Question, QuestionBank, User
+from .models import Assignment, Attendance, ClassBatch, ClassHoliday, ClassSchedule, CurriculumNode, Enrollment, Level, LevelPromotion, ParentStudentLink, Question, QuestionBank, StudentProfile, Test, TestAttempt, TestQuestion, User
 from .forms import (
     AdminAccountCreationForm,
     ParentAccountCreationForm,
@@ -28,6 +28,8 @@ from .forms import (
     StudentPromotionForm,
     QuestionBankForm,
     QuestionForm,
+    TestForm,
+    TestQuestionForm,
     TeacherAccountCreationForm,
     TeacherEditForm,
 )
@@ -128,7 +130,7 @@ def curriculum_list(request, level_pk):
 
 
 def _node_or_404(pk):
-    node = CurriculumNode.objects.filter(pk=pk).select_related('level', 'parent').prefetch_related('children', 'question_banks__questions', 'assignments').first()
+    node = CurriculumNode.objects.filter(pk=pk).select_related('level', 'parent').prefetch_related('children', 'question_banks__questions', 'assignments', 'tests__test_questions__question').first()
     if not node:
         raise PermissionDenied
     return node
@@ -291,6 +293,114 @@ def assignment_delete(request, pk):
         assignment.delete()
         messages.success(request, 'Assignment deleted.')
     return redirect('accounts:curriculum_node_detail', pk=node_pk)
+
+
+@role_required(User.Role.ADMIN)
+def test_create(request, node_pk):
+    node = _node_or_404(node_pk)
+    form = TestForm(request.POST or None, node=node, created_by=request.user)
+    if request.method == 'POST' and form.is_valid():
+        test = form.save()
+        messages.success(request, f'Test “{test.title}” created.')
+        return redirect('accounts:test_detail', pk=test.pk)
+    return render(request, 'dashboard/curriculum/test_form.html', {'dashboard_role': 'Admin', 'eyebrow': 'Tests', 'form': form, 'node': node, 'mode': 'Create', 'test': None})
+
+
+@role_required(User.Role.ADMIN)
+def test_detail(request, pk):
+    test = Test.objects.filter(pk=pk).select_related('node__level', 'created_by').prefetch_related('test_questions__question__bank').first()
+    if not test:
+        raise PermissionDenied
+    return render(request, 'dashboard/curriculum/test_detail.html', {'dashboard_role': 'Admin', 'eyebrow': 'Tests', 'test': test})
+
+
+@role_required(User.Role.ADMIN)
+def test_edit(request, pk):
+    test = Test.objects.filter(pk=pk).select_related('node__level').first()
+    if not test:
+        raise PermissionDenied
+    form = TestForm(request.POST or None, instance=test, node=test.node, created_by=request.user)
+    if request.method == 'POST' and form.is_valid():
+        form.save()
+        messages.success(request, 'Test updated.')
+        return redirect('accounts:test_detail', pk=test.pk)
+    return render(request, 'dashboard/curriculum/test_form.html', {'dashboard_role': 'Admin', 'eyebrow': 'Tests', 'form': form, 'node': test.node, 'mode': 'Edit', 'test': test})
+
+
+@role_required(User.Role.ADMIN)
+def test_delete(request, pk):
+    test = Test.objects.filter(pk=pk).select_related('node').first()
+    if not test:
+        raise PermissionDenied
+    node_pk = test.node_id
+    if request.method == 'POST':
+        test.delete()
+        messages.success(request, 'Test deleted.')
+    return redirect('accounts:curriculum_node_detail', pk=node_pk)
+
+
+@role_required(User.Role.ADMIN)
+def test_add_question(request, pk):
+    test = Test.objects.filter(pk=pk).select_related('node__level').first()
+    if not test:
+        raise PermissionDenied
+    form = TestQuestionForm(request.POST or None, test=test)
+    if request.method == 'POST' and form.is_valid():
+        membership = form.save(commit=False)
+        membership.test = test
+        membership.save()
+        messages.success(request, 'Question added to the test.')
+        return redirect('accounts:test_detail', pk=test.pk)
+    return render(request, 'dashboard/curriculum/test_question_form.html', {'dashboard_role': 'Admin', 'eyebrow': 'Tests', 'form': form, 'test': test})
+
+
+@role_required(User.Role.ADMIN)
+def test_remove_question(request, pk, question_id):
+    membership = TestQuestion.objects.filter(pk=question_id, test_id=pk).first()
+    if not membership:
+        raise PermissionDenied
+    if request.method == 'POST':
+        membership.delete()
+        messages.success(request, 'Question removed from the test.')
+    return redirect('accounts:test_detail', pk=pk)
+
+
+@role_required(User.Role.ADMIN)
+def admin_reports(request):
+    level_id = request.GET.get('level', '').strip()
+    students_qs = StudentProfile.objects.filter(user__role=User.Role.STUDENT).select_related('user', 'current_level').prefetch_related('enrollments__class_batch__level')
+    if level_id:
+        students_qs = students_qs.filter(current_level_id=level_id)
+    student_rows = []
+    for profile in students_qs.order_by('user__first_name', 'user__last_name', 'user__email'):
+        active_enrollment = profile.enrollments.filter(is_active=True).select_related('class_batch__level').first()
+        attendance_qs = Attendance.objects.filter(student=profile)
+        attendance_total = attendance_qs.count()
+        attendance_attended = attendance_qs.filter(status__in=[Attendance.Status.PRESENT, Attendance.Status.LATE]).count()
+        attempt_stats = TestAttempt.objects.filter(student=profile).aggregate(test_count=Count('id'), average_score=Avg('score'), average_accuracy=Avg('accuracy'))
+        student_rows.append({'profile': profile, 'enrollment': active_enrollment, 'attendance_percent': round(attendance_attended * 100 / attendance_total) if attendance_total else 0, 'attendance_total': attendance_total, 'test_count': attempt_stats['test_count'] or 0, 'average_score': round(attempt_stats['average_accuracy']) if attempt_stats['average_accuracy'] is not None else None})
+
+    classes_qs = ClassBatch.objects.select_related('level', 'teacher').prefetch_related('enrollments__student__user')
+    if level_id:
+        classes_qs = classes_qs.filter(level_id=level_id)
+    class_rows = []
+    for batch in classes_qs.order_by('level__code', 'name'):
+        attendance_qs = Attendance.objects.filter(class_batch=batch)
+        total = attendance_qs.count()
+        attended = attendance_qs.filter(status__in=[Attendance.Status.PRESENT, Attendance.Status.LATE]).count()
+        class_rows.append({'batch': batch, 'active_students': batch.enrollments.filter(is_active=True).count(), 'attendance_percent': round(attended * 100 / total) if total else 0, 'attendance_total': total})
+    levels = Level.objects.order_by('code')
+    tests = Test.objects.select_related('node__level').annotate(question_total=Count('test_questions')).order_by('-created_at')[:8]
+    return render(request, 'dashboard/reports.html', {'dashboard_role': 'Admin', 'eyebrow': 'Academy reports', 'student_rows': student_rows, 'class_rows': class_rows, 'tests': tests, 'levels': levels, 'selected_level': level_id})
+
+
+@role_required(User.Role.ADMIN)
+def test_list(request):
+    query = request.GET.get('q', '').strip()
+    tests = Test.objects.select_related('node__level').annotate(question_total=Count('test_questions')).order_by('-created_at')
+    if query:
+        tests = tests.filter(Q(title__icontains=query) | Q(node__title__icontains=query) | Q(node__level__code__icontains=query))
+    return render(request, 'dashboard/curriculum/tests.html', {'dashboard_role': 'Admin', 'eyebrow': 'Tests', 'tests': tests, 'query': query})
 
 
 @role_required(User.Role.ADMIN)

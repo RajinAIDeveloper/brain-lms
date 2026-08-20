@@ -2,7 +2,7 @@ from datetime import date
 
 from django import forms
 
-from .models import Assignment, ClassBatch, ClassHoliday, ClassSchedule, CurriculumNode, Enrollment, Level, LevelPromotion, ParentStudentLink, Question, QuestionBank, StudentProfile, User
+from .models import Assignment, ClassBatch, ClassHoliday, ClassSchedule, CurriculumNode, Enrollment, Level, LevelPromotion, ParentStudentLink, Question, QuestionBank, StudentProfile, Test, TestQuestion, User
 
 
 class AdminAccountCreationForm(forms.ModelForm):
@@ -311,6 +311,63 @@ class AssignmentForm(forms.ModelForm):
         if commit:
             assignment.save()
         return assignment
+
+
+class TestForm(forms.ModelForm):
+    class Meta:
+        model = Test
+        fields = ('title', 'instructions', 'duration_minutes', 'passing_score', 'is_published')
+        widgets = {
+            'title': forms.TextInput(attrs={'placeholder': 'Level 2 assessment'}),
+            'instructions': forms.Textarea(attrs={'rows': 4}),
+            'duration_minutes': forms.NumberInput(attrs={'min': 1}),
+            'passing_score': forms.NumberInput(attrs={'min': 0, 'max': 100}),
+        }
+
+    def __init__(self, *args, node, created_by, **kwargs):
+        self.node = node
+        self.created_by = created_by
+        super().__init__(*args, **kwargs)
+
+    def save(self, commit=True):
+        test = super().save(commit=False)
+        test.node = self.node
+        if not test.pk:
+            test.created_by = self.created_by
+        if commit:
+            test.save()
+        return test
+
+
+class TestQuestionForm(forms.ModelForm):
+    class Meta:
+        model = TestQuestion
+        fields = ('question', 'ordering', 'points')
+        widgets = {'ordering': forms.NumberInput(attrs={'min': 1}), 'points': forms.NumberInput(attrs={'min': 1})}
+
+    def __init__(self, *args, test, **kwargs):
+        self.test = test
+        super().__init__(*args, **kwargs)
+        self.fields['ordering'].required = True
+        if not self.is_bound and not self.instance.pk:
+            self.initial['ordering'] = test.test_questions.count() + 1
+        node_ids = {test.node_id}
+        frontier = {test.node_id}
+        while frontier:
+            child_ids = set(CurriculumNode.objects.filter(level=test.node.level, parent_id__in=frontier).values_list('pk', flat=True))
+            frontier = child_ids - node_ids
+            node_ids.update(frontier)
+        self.fields['question'].queryset = Question.objects.filter(
+            bank__node_id__in=node_ids,
+            is_active=True,
+        ).exclude(test_memberships__test=test).select_related('bank__node').order_by('bank__name', 'difficulty', 'pk')
+        self.fields['question'].label_from_instance = lambda question: f'{question.bank.name} · {question.prompt[:70]}'
+
+    def clean_ordering(self):
+        ordering = self.cleaned_data['ordering']
+        if TestQuestion.objects.filter(test=self.test, ordering=ordering).exclude(pk=self.instance.pk).exists():
+            raise forms.ValidationError('This question number is already used in the test.')
+        return ordering
 
 
 class ClassBatchForm(forms.ModelForm):

@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 
-from .models import Assignment, Attendance, ClassBatch, ClassHoliday, ClassSchedule, CurriculumNode, Enrollment, Level, LevelPromotion, ParentProfile, ParentStudentLink, Question, QuestionBank, StudentProfile, TeacherProfile, User
+from .models import Assignment, Attendance, ClassBatch, ClassHoliday, ClassSchedule, CurriculumNode, Enrollment, Level, LevelPromotion, ParentProfile, ParentStudentLink, Question, QuestionBank, StudentProfile, TeacherProfile, Test, TestAttempt, TestQuestion, User
 
 
 @admin.register(User)
@@ -15,6 +15,6 @@ class BrainGymUserAdmin(UserAdmin):
     filter_horizontal = ('groups', 'user_permissions')
 
 
-admin.site.register([Level, CurriculumNode, QuestionBank, Question, Assignment, ClassBatch, ClassSchedule, ClassHoliday, LevelPromotion, Attendance, TeacherProfile, StudentProfile, ParentProfile, ParentStudentLink, Enrollment])
+admin.site.register([Level, CurriculumNode, QuestionBank, Question, Assignment, Test, TestQuestion, TestAttempt, ClassBatch, ClassSchedule, ClassHoliday, LevelPromotion, Attendance, TeacherProfile, StudentProfile, ParentProfile, ParentStudentLink, Enrollment])
 
 # Register your models here.

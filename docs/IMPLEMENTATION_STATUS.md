@@ -24,6 +24,9 @@
 - Admin can promote students between levels with a promotion history and note. Student and Admin views show enrollment history, ongoing/completed/left class status, attendance counts, and per-class attendance percentages. Demo Batch A includes Tuesday and Thursday weekly schedule examples.
 - Curriculum studio now supports an unlimited self-referential tree under each level: Subject → Topic → Section → Subsection (and any further depth). Admins can create, edit, and delete nodes, attach assignments, and manage question banks with numeric or multiple-choice questions. Migration `accounts.0005_curriculumnode_assignment_questionbank_question` is applied.
 
+- Admins can now create and manage published or draft tests on any curriculum node, add ordered questions from that level's question banks, set duration and passing score, and remove questions. Test attempts are persisted for reporting. Migration `accounts.0006_test_testattempt_testquestion` is applied.
+- Added an Admin Reports workspace with level filtering, all-student performance rows (attendance, active class, test count, average score), class reports, and recent test activity. The existing Classes workspace remains the full class/batch management view.
+
 ## Validation command
 
 ```powershell
@@ -33,4 +36,4 @@
 
 ## Next implementation slice
 
-Build the remaining Phase 3 learning objects from the MVP plan: exercises, tests, ordered question membership, and teacher-created assignment targeting. Preserve the existing role boundaries and extend tests before adding new dashboard behaviour.
+Build the remaining Phase 3 learning objects from the MVP plan: teacher-created assignment targeting and then the student test/practice completion flow that writes `TestAttempt` metrics. Preserve the existing role boundaries and extend tests before adding new dashboard behaviour.

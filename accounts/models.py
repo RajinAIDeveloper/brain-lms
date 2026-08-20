@@ -149,6 +149,66 @@ class Assignment(models.Model):
         return self.title
 
 
+class Test(models.Model):
+    node = models.ForeignKey(CurriculumNode, on_delete=models.CASCADE, related_name='tests')
+    title = models.CharField(max_length=160)
+    instructions = models.TextField(blank=True)
+    duration_minutes = models.PositiveIntegerField(default=15)
+    passing_score = models.PositiveSmallIntegerField(default=70)
+    is_published = models.BooleanField(default=False)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='created_tests')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at', 'title']
+
+    def clean(self):
+        if self.passing_score > 100:
+            raise ValidationError({'passing_score': 'Passing score must be between 0 and 100.'})
+        if self.duration_minutes < 1:
+            raise ValidationError({'duration_minutes': 'Test duration must be at least one minute.'})
+
+    @property
+    def question_count(self):
+        return self.test_questions.count()
+
+    def __str__(self):
+        return self.title
+
+
+class TestQuestion(models.Model):
+    test = models.ForeignKey(Test, on_delete=models.CASCADE, related_name='test_questions')
+    question = models.ForeignKey(Question, on_delete=models.PROTECT, related_name='test_memberships')
+    ordering = models.PositiveIntegerField(default=0)
+    points = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        ordering = ['ordering', 'pk']
+        constraints = [
+            models.UniqueConstraint(fields=['test', 'question'], name='unique_question_per_test'),
+            models.UniqueConstraint(fields=['test', 'ordering'], name='unique_test_question_order'),
+        ]
+
+    def __str__(self):
+        return f'{self.test} · {self.question}'
+
+
+class TestAttempt(models.Model):
+    student = models.ForeignKey('StudentProfile', on_delete=models.CASCADE, related_name='test_attempts')
+    test = models.ForeignKey(Test, on_delete=models.CASCADE, related_name='attempts')
+    score = models.PositiveIntegerField(default=0)
+    accuracy = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    duration_seconds = models.PositiveIntegerField(default=0)
+    average_answer_time = models.DecimalField(max_digits=7, decimal_places=2, default=0)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-submitted_at']
+
+    def __str__(self):
+        return f'{self.student} · {self.test} · {self.score}'
+
+
 class ClassBatch(models.Model):
     name = models.CharField(max_length=120)
     level = models.ForeignKey(Level, on_delete=models.PROTECT, related_name='classes')
