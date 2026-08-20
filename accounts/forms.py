@@ -2,7 +2,7 @@ from datetime import date
 
 from django import forms
 
-from .models import ClassBatch, ClassHoliday, ClassSchedule, Enrollment, Level, LevelPromotion, ParentStudentLink, StudentProfile, User
+from .models import Assignment, ClassBatch, ClassHoliday, ClassSchedule, CurriculumNode, Enrollment, Level, LevelPromotion, ParentStudentLink, Question, QuestionBank, StudentProfile, User
 
 
 class AdminAccountCreationForm(forms.ModelForm):
@@ -191,6 +191,122 @@ class LevelForm(forms.ModelForm):
 
     def clean_code(self):
         return self.cleaned_data['code'].strip().upper()
+
+
+class CurriculumNodeForm(forms.ModelForm):
+    class Meta:
+        model = CurriculumNode
+        fields = ('level', 'parent', 'title', 'node_type', 'description', 'ordering', 'is_active')
+        widgets = {
+            'title': forms.TextInput(attrs={'placeholder': 'Mental addition'}),
+            'description': forms.Textarea(attrs={'rows': 3, 'placeholder': 'Learning outcomes and guidance'}),
+            'ordering': forms.NumberInput(attrs={'min': 0}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['level'].queryset = Level.objects.order_by('code')
+        self.fields['parent'].queryset = CurriculumNode.objects.select_related('level').order_by('level__code', 'ordering', 'title')
+        self.fields['parent'].label_from_instance = lambda node: f'{node.level.code} · {node.title}'
+
+    def clean(self):
+        cleaned = super().clean()
+        level = cleaned.get('level')
+        parent = cleaned.get('parent')
+        node_type = cleaned.get('node_type')
+        if parent and level and parent.level_id != level.pk:
+            self.add_error('parent', 'Choose a parent from the selected level.')
+        if not parent and node_type and node_type != CurriculumNode.NodeType.SUBJECT:
+            self.add_error('node_type', 'Top-level nodes must be subjects.')
+        if parent and node_type == CurriculumNode.NodeType.SUBJECT:
+            self.add_error('node_type', 'Subjects must be top-level nodes.')
+        if parent and self.instance.pk:
+            ancestor = parent
+            seen = set()
+            while ancestor:
+                if ancestor.pk == self.instance.pk or ancestor.pk in seen:
+                    self.add_error('parent', 'This parent would create a curriculum cycle.')
+                    break
+                seen.add(ancestor.pk)
+                ancestor = ancestor.parent
+        return cleaned
+
+
+class QuestionBankForm(forms.ModelForm):
+    class Meta:
+        model = QuestionBank
+        fields = ('name', 'description', 'is_active')
+        widgets = {'name': forms.TextInput(attrs={'placeholder': 'Addition warm-up'}), 'description': forms.Textarea(attrs={'rows': 3})}
+
+    def __init__(self, *args, node, created_by, **kwargs):
+        self.node = node
+        self.created_by = created_by
+        super().__init__(*args, **kwargs)
+
+    def save(self, commit=True):
+        bank = super().save(commit=False)
+        bank.node = self.node
+        bank.created_by = self.created_by
+        if commit:
+            bank.save()
+        return bank
+
+
+class QuestionForm(forms.ModelForm):
+    class Meta:
+        model = Question
+        fields = ('prompt', 'question_type', 'correct_answer', 'options', 'explanation', 'difficulty', 'is_active')
+        widgets = {
+            'prompt': forms.Textarea(attrs={'rows': 3, 'placeholder': 'What is 7 + 8?'}),
+            'options': forms.Textarea(attrs={'rows': 2, 'placeholder': '["13", "14", "15"]'}),
+            'explanation': forms.Textarea(attrs={'rows': 2}),
+            'difficulty': forms.NumberInput(attrs={'min': 1, 'max': 5}),
+        }
+
+    def __init__(self, *args, bank, **kwargs):
+        self.bank = bank
+        super().__init__(*args, **kwargs)
+
+    def clean_options(self):
+        options = self.cleaned_data.get('options')
+        if options is None:
+            return []
+        if not isinstance(options, list):
+            raise forms.ValidationError('Options must be a JSON list, for example ["12", "13"].')
+        return options
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get('question_type') == Question.QuestionType.MULTIPLE_CHOICE and not cleaned.get('options'):
+            self.add_error('options', 'Multiple-choice questions need at least one option.')
+        return cleaned
+
+    def save(self, commit=True):
+        question = super().save(commit=False)
+        question.bank = self.bank
+        if commit:
+            question.save()
+        return question
+
+
+class AssignmentForm(forms.ModelForm):
+    class Meta:
+        model = Assignment
+        fields = ('title', 'instructions', 'due_date', 'is_published')
+        widgets = {'title': forms.TextInput(attrs={'placeholder': 'Week 1 practice'}), 'instructions': forms.Textarea(attrs={'rows': 4}), 'due_date': forms.DateInput(attrs={'type': 'date'})}
+
+    def __init__(self, *args, node, created_by, **kwargs):
+        self.node = node
+        self.created_by = created_by
+        super().__init__(*args, **kwargs)
+
+    def save(self, commit=True):
+        assignment = super().save(commit=False)
+        assignment.node = self.node
+        assignment.created_by = self.created_by
+        if commit:
+            assignment.save()
+        return assignment
 
 
 class ClassBatchForm(forms.ModelForm):

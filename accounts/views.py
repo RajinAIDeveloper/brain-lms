@@ -9,7 +9,7 @@ from django.db.models import Count, Q
 from django.db.models.deletion import ProtectedError
 from django.shortcuts import redirect, render
 
-from .models import Attendance, ClassBatch, ClassHoliday, ClassSchedule, Enrollment, Level, LevelPromotion, ParentStudentLink, User
+from .models import Assignment, Attendance, ClassBatch, ClassHoliday, ClassSchedule, CurriculumNode, Enrollment, Level, LevelPromotion, ParentStudentLink, Question, QuestionBank, User
 from .forms import (
     AdminAccountCreationForm,
     ParentAccountCreationForm,
@@ -20,10 +20,14 @@ from .forms import (
     ClassBatchForm,
     ClassHolidayForm,
     ClassScheduleForm,
+    AssignmentForm,
+    CurriculumNodeForm,
     EnrollmentForm,
     EnrollmentStatusForm,
     LevelForm,
     StudentPromotionForm,
+    QuestionBankForm,
+    QuestionForm,
     TeacherAccountCreationForm,
     TeacherEditForm,
 )
@@ -94,6 +98,199 @@ def level_detail(request, pk):
     if not level:
         raise PermissionDenied
     return render(request, 'dashboard/levels/detail.html', {'dashboard_role': 'Admin', 'eyebrow': 'Academic structure', 'level': level})
+
+
+def _curriculum_tree(nodes):
+    """Turn a flat level queryset into a nested structure for recursive templates."""
+    grouped = {}
+    for node in nodes:
+        grouped.setdefault(node.parent_id, []).append(node)
+
+    def branch(parent_id=None):
+        return [{'node': node, 'children': branch(node.pk)} for node in grouped.get(parent_id, [])]
+
+    return branch()
+
+
+@role_required(User.Role.ADMIN)
+def curriculum_level_list(request):
+    levels = Level.objects.order_by('code').annotate(curriculum_count=Count('curriculum_nodes'))
+    return render(request, 'dashboard/curriculum/levels.html', {'dashboard_role': 'Admin', 'eyebrow': 'Curriculum studio', 'levels': levels})
+
+
+@role_required(User.Role.ADMIN)
+def curriculum_list(request, level_pk):
+    level = Level.objects.filter(pk=level_pk).first()
+    if not level:
+        raise PermissionDenied
+    nodes = list(CurriculumNode.objects.filter(level=level).order_by('ordering', 'title'))
+    return render(request, 'dashboard/curriculum/tree.html', {'dashboard_role': 'Admin', 'eyebrow': 'Curriculum studio', 'level': level, 'tree': _curriculum_tree(nodes), 'node_count': len(nodes)})
+
+
+def _node_or_404(pk):
+    node = CurriculumNode.objects.filter(pk=pk).select_related('level', 'parent').prefetch_related('children', 'question_banks__questions', 'assignments').first()
+    if not node:
+        raise PermissionDenied
+    return node
+
+
+@role_required(User.Role.ADMIN)
+def curriculum_node_create(request):
+    level_id = request.GET.get('level') or request.POST.get('level')
+    parent_id = request.GET.get('parent') or request.POST.get('parent')
+    initial = {'level': level_id, 'parent': parent_id, 'node_type': CurriculumNode.NodeType.SUBSECTION if parent_id else CurriculumNode.NodeType.SUBJECT}
+    form = CurriculumNodeForm(request.POST or None, initial=initial)
+    if request.method == 'POST' and form.is_valid():
+        node = form.save()
+        messages.success(request, f'{node.title} was added to {node.level.code}.')
+        return redirect('accounts:curriculum_node_detail', pk=node.pk)
+    return render(request, 'dashboard/curriculum/node_form.html', {'dashboard_role': 'Admin', 'eyebrow': 'Curriculum studio', 'form': form, 'mode': 'Create', 'node': None})
+
+
+@role_required(User.Role.ADMIN)
+def curriculum_node_detail(request, pk):
+    node = _node_or_404(pk)
+    return render(request, 'dashboard/curriculum/node_detail.html', {'dashboard_role': 'Admin', 'eyebrow': 'Curriculum studio', 'node': node})
+
+
+@role_required(User.Role.ADMIN)
+def curriculum_node_edit(request, pk):
+    node = _node_or_404(pk)
+    form = CurriculumNodeForm(request.POST or None, instance=node)
+    if request.method == 'POST' and form.is_valid():
+        node = form.save()
+        messages.success(request, 'Curriculum node updated.')
+        return redirect('accounts:curriculum_node_detail', pk=node.pk)
+    return render(request, 'dashboard/curriculum/node_form.html', {'dashboard_role': 'Admin', 'eyebrow': 'Curriculum studio', 'form': form, 'mode': 'Edit', 'node': node})
+
+
+@role_required(User.Role.ADMIN)
+def curriculum_node_delete(request, pk):
+    node = _node_or_404(pk)
+    if request.method == 'POST':
+        level_pk = node.level_id
+        node.delete()
+        messages.success(request, 'Curriculum node and its content were deleted.')
+        return redirect('accounts:curriculum_list', level_pk=level_pk)
+    return render(request, 'dashboard/curriculum/node_delete.html', {'dashboard_role': 'Admin', 'eyebrow': 'Curriculum studio', 'node': node})
+
+
+@role_required(User.Role.ADMIN)
+def question_bank_create(request, node_pk):
+    node = _node_or_404(node_pk)
+    form = QuestionBankForm(request.POST or None, node=node, created_by=request.user)
+    if request.method == 'POST' and form.is_valid():
+        bank = form.save()
+        messages.success(request, f'Question bank “{bank.name}” created.')
+        return redirect('accounts:question_bank_detail', pk=bank.pk)
+    return render(request, 'dashboard/curriculum/question_bank_form.html', {'dashboard_role': 'Admin', 'eyebrow': 'Question banks', 'form': form, 'node': node, 'mode': 'Create', 'bank': None})
+
+
+@role_required(User.Role.ADMIN)
+def question_bank_detail(request, pk):
+    bank = QuestionBank.objects.filter(pk=pk).select_related('node__level', 'created_by').prefetch_related('questions').first()
+    if not bank:
+        raise PermissionDenied
+    return render(request, 'dashboard/curriculum/question_bank_detail.html', {'dashboard_role': 'Admin', 'eyebrow': 'Question banks', 'bank': bank})
+
+
+@role_required(User.Role.ADMIN)
+def question_bank_edit(request, pk):
+    bank = QuestionBank.objects.filter(pk=pk).select_related('node__level').first()
+    if not bank:
+        raise PermissionDenied
+    form = QuestionBankForm(request.POST or None, instance=bank, node=bank.node, created_by=request.user)
+    if request.method == 'POST' and form.is_valid():
+        form.save()
+        messages.success(request, 'Question bank updated.')
+        return redirect('accounts:question_bank_detail', pk=bank.pk)
+    return render(request, 'dashboard/curriculum/question_bank_form.html', {'dashboard_role': 'Admin', 'eyebrow': 'Question banks', 'form': form, 'node': bank.node, 'mode': 'Edit', 'bank': bank})
+
+
+@role_required(User.Role.ADMIN)
+def question_bank_delete(request, pk):
+    bank = QuestionBank.objects.filter(pk=pk).select_related('node').first()
+    if not bank:
+        raise PermissionDenied
+    node_pk = bank.node_id
+    if request.method == 'POST':
+        bank.delete()
+        messages.success(request, 'Question bank deleted.')
+    return redirect('accounts:curriculum_node_detail', pk=node_pk)
+
+
+@role_required(User.Role.ADMIN)
+def question_create(request, bank_pk):
+    bank = QuestionBank.objects.filter(pk=bank_pk).select_related('node__level').first()
+    if not bank:
+        raise PermissionDenied
+    form = QuestionForm(request.POST or None, bank=bank)
+    if request.method == 'POST' and form.is_valid():
+        form.save()
+        messages.success(request, 'Question added to the bank.')
+        return redirect('accounts:question_bank_detail', pk=bank.pk)
+    return render(request, 'dashboard/curriculum/question_form.html', {'dashboard_role': 'Admin', 'eyebrow': 'Question banks', 'form': form, 'bank': bank, 'mode': 'Create', 'question': None})
+
+
+@role_required(User.Role.ADMIN)
+def question_edit(request, pk):
+    question = Question.objects.filter(pk=pk).select_related('bank__node__level').first()
+    if not question:
+        raise PermissionDenied
+    form = QuestionForm(request.POST or None, instance=question, bank=question.bank)
+    if request.method == 'POST' and form.is_valid():
+        form.save()
+        messages.success(request, 'Question updated.')
+        return redirect('accounts:question_bank_detail', pk=question.bank_id)
+    return render(request, 'dashboard/curriculum/question_form.html', {'dashboard_role': 'Admin', 'eyebrow': 'Question banks', 'form': form, 'bank': question.bank, 'mode': 'Edit', 'question': question})
+
+
+@role_required(User.Role.ADMIN)
+def question_delete(request, pk):
+    question = Question.objects.filter(pk=pk).select_related('bank').first()
+    if not question:
+        raise PermissionDenied
+    bank_pk = question.bank_id
+    if request.method == 'POST':
+        question.delete()
+        messages.success(request, 'Question deleted.')
+    return redirect('accounts:question_bank_detail', pk=bank_pk)
+
+
+@role_required(User.Role.ADMIN)
+def assignment_create(request, node_pk):
+    node = _node_or_404(node_pk)
+    form = AssignmentForm(request.POST or None, node=node, created_by=request.user)
+    if request.method == 'POST' and form.is_valid():
+        form.save()
+        messages.success(request, 'Assignment created for this curriculum node.')
+        return redirect('accounts:curriculum_node_detail', pk=node.pk)
+    return render(request, 'dashboard/curriculum/assignment_form.html', {'dashboard_role': 'Admin', 'eyebrow': 'Assignments', 'form': form, 'node': node, 'mode': 'Create', 'assignment': None})
+
+
+@role_required(User.Role.ADMIN)
+def assignment_edit(request, pk):
+    assignment = Assignment.objects.filter(pk=pk).select_related('node__level').first()
+    if not assignment:
+        raise PermissionDenied
+    form = AssignmentForm(request.POST or None, instance=assignment, node=assignment.node, created_by=request.user)
+    if request.method == 'POST' and form.is_valid():
+        form.save()
+        messages.success(request, 'Assignment updated.')
+        return redirect('accounts:curriculum_node_detail', pk=assignment.node_id)
+    return render(request, 'dashboard/curriculum/assignment_form.html', {'dashboard_role': 'Admin', 'eyebrow': 'Assignments', 'form': form, 'node': assignment.node, 'mode': 'Edit', 'assignment': assignment})
+
+
+@role_required(User.Role.ADMIN)
+def assignment_delete(request, pk):
+    assignment = Assignment.objects.filter(pk=pk).select_related('node').first()
+    if not assignment:
+        raise PermissionDenied
+    node_pk = assignment.node_id
+    if request.method == 'POST':
+        assignment.delete()
+        messages.success(request, 'Assignment deleted.')
+    return redirect('accounts:curriculum_node_detail', pk=node_pk)
 
 
 @role_required(User.Role.ADMIN)

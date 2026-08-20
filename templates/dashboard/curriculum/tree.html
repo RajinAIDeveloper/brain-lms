@@ -1,0 +1,6 @@
+{% extends 'dashboard/base.html' %}
+{% block title %}{{ level.code }} curriculum · Brain Gym{% endblock %}
+{% block dashboard_content %}
+<div class="mt-10 flex flex-col sm:flex-row sm:items-end justify-between gap-4"><div><a href="{% url 'accounts:curriculum_level_list' %}" class="text-sm font-semibold text-indigo-600">← All levels</a><h2 class="display text-3xl font-bold mt-3">{{ level.code }} · {{ level.name }}</h2><p class="text-slate-500 mt-2">{{ node_count }} nodes · content can be nested as deeply as needed.</p></div><a href="{% url 'accounts:curriculum_node_create' %}?level={{ level.pk }}" class="rounded-xl bg-ink text-white px-4 py-2.5 text-sm font-semibold">Add subject +</a></div>
+<div class="card p-6 sm:p-8 mt-7">{% if tree %}{% include 'dashboard/curriculum/_tree.html' with branches=tree %}{% else %}<p class="text-slate-500">No subjects yet. Start with the first subject for this level.</p>{% endif %}</div>
+{% endblock %}

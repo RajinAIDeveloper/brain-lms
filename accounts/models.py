@@ -56,6 +56,99 @@ class Level(models.Model):
         return f'{self.code} · {self.name}'
 
 
+class CurriculumNode(models.Model):
+    """A level-scoped curriculum tree with unlimited nesting."""
+
+    class NodeType(models.TextChoices):
+        SUBJECT = 'SUBJECT', 'Subject'
+        TOPIC = 'TOPIC', 'Topic'
+        SECTION = 'SECTION', 'Section'
+        SUBSECTION = 'SUBSECTION', 'Subsection'
+
+    level = models.ForeignKey(Level, on_delete=models.PROTECT, related_name='curriculum_nodes')
+    parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE, related_name='children')
+    title = models.CharField(max_length=160)
+    node_type = models.CharField(max_length=20, choices=NodeType.choices)
+    description = models.TextField(blank=True)
+    ordering = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['ordering', 'title']
+
+    def clean(self):
+        if self.parent_id and self.parent_id == self.pk:
+            raise ValidationError({'parent': 'A curriculum node cannot be its own parent.'})
+        if self.parent_id and self.level_id and self.parent.level_id != self.level_id:
+            raise ValidationError({'parent': 'Parent nodes must belong to the same level.'})
+        if not self.parent_id and self.node_type != self.NodeType.SUBJECT:
+            raise ValidationError({'node_type': 'Top-level curriculum nodes must be subjects.'})
+        if self.parent_id and self.node_type == self.NodeType.SUBJECT:
+            raise ValidationError({'node_type': 'Only top-level nodes can be subjects.'})
+        ancestor = self.parent
+        seen = set()
+        while ancestor:
+            if ancestor.pk in seen or ancestor.pk == self.pk:
+                raise ValidationError({'parent': 'This parent would create a curriculum cycle.'})
+            seen.add(ancestor.pk)
+            ancestor = ancestor.parent
+
+    def __str__(self):
+        return f'{self.level.code} · {self.title}'
+
+
+class QuestionBank(models.Model):
+    node = models.ForeignKey(CurriculumNode, on_delete=models.CASCADE, related_name='question_banks')
+    name = models.CharField(max_length=160)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='created_question_banks')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
+class Question(models.Model):
+    class QuestionType(models.TextChoices):
+        NUMERIC = 'NUMERIC', 'Numeric'
+        MULTIPLE_CHOICE = 'MULTIPLE_CHOICE', 'Multiple choice'
+
+    bank = models.ForeignKey(QuestionBank, on_delete=models.CASCADE, related_name='questions')
+    prompt = models.TextField()
+    question_type = models.CharField(max_length=20, choices=QuestionType.choices, default=QuestionType.NUMERIC)
+    correct_answer = models.CharField(max_length=240)
+    options = models.JSONField(default=list, blank=True)
+    explanation = models.TextField(blank=True)
+    difficulty = models.PositiveSmallIntegerField(default=1)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['difficulty', 'pk']
+
+    def __str__(self):
+        return self.prompt[:80]
+
+
+class Assignment(models.Model):
+    node = models.ForeignKey(CurriculumNode, on_delete=models.CASCADE, related_name='assignments')
+    title = models.CharField(max_length=160)
+    instructions = models.TextField(blank=True)
+    due_date = models.DateField(null=True, blank=True)
+    is_published = models.BooleanField(default=False)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='created_assignments')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at', 'title']
+
+    def __str__(self):
+        return self.title
+
+
 class ClassBatch(models.Model):
     name = models.CharField(max_length=120)
     level = models.ForeignKey(Level, on_delete=models.PROTECT, related_name='classes')

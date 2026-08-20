@@ -1,0 +1,6 @@
+{% extends 'dashboard/base.html' %}
+{% block title %}Curriculum · Brain Gym{% endblock %}
+{% block dashboard_content %}
+<div class="mt-10 flex items-end justify-between gap-4"><div><p class="text-sm text-slate-500">Build subjects, topics, sections and unlimited subsections for each level.</p><h2 class="display text-3xl font-bold mt-2">Choose a level</h2></div><a href="{% url 'accounts:level_create' %}" class="rounded-xl bg-ink text-white px-4 py-2.5 text-sm font-semibold">New level +</a></div>
+<div class="grid md:grid-cols-2 xl:grid-cols-3 gap-5 mt-7">{% for level in levels %}<a href="{% url 'accounts:curriculum_list' level.pk %}" class="card p-6 hover:-translate-y-1 transition"><span class="rounded-full bg-indigo-50 text-indigo-700 px-3 py-1 text-xs font-bold">{{ level.code }}</span><h3 class="display text-2xl font-bold mt-5">{{ level.name }}</h3><p class="text-sm text-slate-500 mt-2">{{ level.curriculum_count }} curriculum nodes</p><span class="inline-block mt-6 text-sm font-semibold text-indigo-600">Open curriculum →</span></a>{% empty %}<div class="card p-7"><p class="text-slate-500">Create a level before adding curriculum.</p></div>{% endfor %}</div>
+{% endblock %}
