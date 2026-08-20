@@ -53,4 +53,10 @@ class AuthenticationAndOnboardingTests(TestCase):
         response = self.client.get('/admin/accounts/user/add/')
         self.assertEqual(response.status_code, 200)
 
+    def test_logout_uses_post_and_ends_session(self):
+        self.client.login(email='student@braingym.local', password=DEMO_PASSWORD)
+        response = self.client.post('/logout/')
+        self.assertRedirects(response, '/login/')
+        self.assertRedirects(self.client.get('/dashboard/'), '/login/?next=/dashboard/')
+
 # Create your tests here.
