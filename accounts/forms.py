@@ -1,6 +1,6 @@
 from django import forms
 
-from .models import Level, ParentStudentLink, StudentProfile, User
+from .models import ClassBatch, Enrollment, Level, ParentStudentLink, StudentProfile, User
 
 
 class AdminAccountCreationForm(forms.ModelForm):
@@ -179,3 +179,56 @@ class ParentStudentLinkForm(forms.Form):
 
     def save(self):
         return ParentStudentLink.objects.create(parent=self.parent, student=self.cleaned_data['student'], relationship=self.cleaned_data['relationship'].strip() or 'Parent')
+
+
+class LevelForm(forms.ModelForm):
+    class Meta:
+        model = Level
+        fields = ('name', 'code', 'description')
+        widgets = {'name': forms.TextInput(attrs={'placeholder': 'Level 2'}), 'code': forms.TextInput(attrs={'placeholder': 'L2'}), 'description': forms.Textarea(attrs={'rows': 4, 'placeholder': 'What students learn at this level'})}
+
+    def clean_code(self):
+        return self.cleaned_data['code'].strip().upper()
+
+
+class ClassBatchForm(forms.ModelForm):
+    class Meta:
+        model = ClassBatch
+        fields = ('name', 'level', 'teacher', 'is_active')
+        widgets = {'name': forms.TextInput(attrs={'placeholder': 'Batch A'}), 'level': forms.Select(), 'teacher': forms.Select()}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['teacher'].queryset = User.objects.filter(role=User.Role.TEACHER, is_active=True).order_by('first_name', 'last_name', 'email')
+        self.fields['teacher'].label_from_instance = lambda teacher: teacher.get_full_name() or teacher.email
+
+    def clean_teacher(self):
+        teacher = self.cleaned_data['teacher']
+        if teacher.role != User.Role.TEACHER:
+            raise forms.ValidationError('Only teacher accounts can lead a class.')
+        return teacher
+
+
+class EnrollmentForm(forms.Form):
+    student = forms.ModelChoiceField(queryset=StudentProfile.objects.none(), label='Student to enroll')
+
+    def __init__(self, *args, batch, **kwargs):
+        self.batch = batch
+        super().__init__(*args, **kwargs)
+        self.fields['student'].queryset = StudentProfile.objects.filter(user__role=User.Role.STUDENT, user__is_active=True).exclude(enrollments__class_batch=batch, enrollments__is_active=True).select_related('user', 'current_level').order_by('user__first_name', 'user__last_name', 'user__email')
+        self.fields['student'].label_from_instance = lambda student: f"{student.user.get_full_name() or student.user.email} · {student.current_level or 'Level not assigned'}"
+
+    def clean_student(self):
+        student = self.cleaned_data['student']
+        enrollment = Enrollment.objects.filter(student=student, class_batch=self.batch).first()
+        if enrollment and enrollment.is_active:
+            raise forms.ValidationError('This student is already enrolled in this class.')
+        return student
+
+    def save(self):
+        student = self.cleaned_data['student']
+        Enrollment.objects.filter(student=student, is_active=True).exclude(class_batch=self.batch).update(is_active=False)
+        enrollment, _ = Enrollment.objects.update_or_create(student=student, class_batch=self.batch, defaults={'is_active': True})
+        student.current_level = self.batch.level
+        student.save(update_fields=['current_level'])
+        return enrollment

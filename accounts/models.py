@@ -117,6 +117,7 @@ class Enrollment(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=['student', 'class_batch'], name='unique_student_class')]
+        ordering = ['-is_active', '-enrolled_on']
 
     def __str__(self):
         return f'{self.student} in {self.class_batch}'

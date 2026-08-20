@@ -16,6 +16,7 @@
 - Admin workspace sidebar now includes Create users and Teachers; teacher management has list/search, create, detail, edit, and safe delete flows.
 - Student and Parent management now include list/search, create, detail, edit, and delete flows; student details expose level/enrollment context and parent details expose linked children.
 - Admins can link any active student to a parent from the parent detail page, link multiple students per parent, prevent duplicates, and unlink relationships without deleting accounts.
+- Academic management now has sidebar links and full CRUD for levels and classes/batches. Levels can contain many batches; batches assign one teacher and support student enrollment, single-active-class movement, and unenrollment.
 
 ## Validation command
 

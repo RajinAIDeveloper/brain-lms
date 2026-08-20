@@ -3,11 +3,11 @@ from functools import wraps
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.db.models.deletion import ProtectedError
 from django.shortcuts import redirect, render
 
-from .models import ClassBatch, Enrollment, ParentStudentLink, User
+from .models import ClassBatch, Enrollment, Level, ParentStudentLink, User
 from .forms import (
     AdminAccountCreationForm,
     ParentAccountCreationForm,
@@ -15,6 +15,9 @@ from .forms import (
     StudentAccountCreationForm,
     StudentEditForm,
     ParentStudentLinkForm,
+    ClassBatchForm,
+    EnrollmentForm,
+    LevelForm,
     TeacherAccountCreationForm,
     TeacherEditForm,
 )
@@ -58,6 +61,149 @@ def admin_dashboard(request):
 @role_required(User.Role.ADMIN)
 def admin_users(request):
     return render(request, 'dashboard/admin_users.html', {'dashboard_role': 'Admin', 'eyebrow': 'People and access'})
+
+
+@role_required(User.Role.ADMIN)
+def level_list(request):
+    query = request.GET.get('q', '').strip()
+    levels = Level.objects.all().prefetch_related('classes')
+    if query:
+        levels = levels.filter(Q(name__icontains=query) | Q(code__icontains=query))
+    return render(request, 'dashboard/levels/list.html', {'dashboard_role': 'Admin', 'eyebrow': 'Academic structure', 'levels': levels, 'query': query})
+
+
+@role_required(User.Role.ADMIN)
+def level_create(request):
+    form = LevelForm(request.POST or None)
+    if request.method == 'POST' and form.is_valid():
+        level = form.save()
+        messages.success(request, f'Level {level.code} created.')
+        return redirect('accounts:level_detail', pk=level.pk)
+    return render(request, 'dashboard/levels/form.html', {'dashboard_role': 'Admin', 'eyebrow': 'Academic structure', 'form': form, 'mode': 'Create', 'level': None})
+
+
+@role_required(User.Role.ADMIN)
+def level_detail(request, pk):
+    level = Level.objects.filter(pk=pk).prefetch_related('classes__teacher', 'classes__enrollments').first()
+    if not level:
+        raise PermissionDenied
+    return render(request, 'dashboard/levels/detail.html', {'dashboard_role': 'Admin', 'eyebrow': 'Academic structure', 'level': level})
+
+
+@role_required(User.Role.ADMIN)
+def level_edit(request, pk):
+    level = Level.objects.filter(pk=pk).first()
+    if not level:
+        raise PermissionDenied
+    form = LevelForm(request.POST or None, instance=level)
+    if request.method == 'POST' and form.is_valid():
+        form.save()
+        messages.success(request, 'Level updated.')
+        return redirect('accounts:level_detail', pk=level.pk)
+    return render(request, 'dashboard/levels/form.html', {'dashboard_role': 'Admin', 'eyebrow': 'Academic structure', 'form': form, 'mode': 'Edit', 'level': level})
+
+
+@role_required(User.Role.ADMIN)
+def level_delete(request, pk):
+    level = Level.objects.filter(pk=pk).first()
+    if not level:
+        raise PermissionDenied
+    if request.method == 'POST':
+        code = level.code
+        try:
+            level.delete()
+        except ProtectedError:
+            messages.error(request, 'This level still has classes or students assigned. Remove those relationships before deleting it.')
+            return redirect('accounts:level_detail', pk=level.pk)
+        messages.success(request, f'Level {code} was deleted.')
+        return redirect('accounts:level_list')
+    return render(request, 'dashboard/levels/delete.html', {'dashboard_role': 'Admin', 'eyebrow': 'Academic structure', 'level': level})
+
+
+@role_required(User.Role.ADMIN)
+def batch_list(request):
+    query = request.GET.get('q', '').strip()
+    batches = ClassBatch.objects.select_related('level', 'teacher').prefetch_related('enrollments').annotate(active_enrollment_count=Count('enrollments', filter=Q(enrollments__is_active=True))).order_by('level__code', 'name')
+    if query:
+        batches = batches.filter(Q(name__icontains=query) | Q(level__name__icontains=query) | Q(level__code__icontains=query))
+    return render(request, 'dashboard/batches/list.html', {'dashboard_role': 'Admin', 'eyebrow': 'Academic structure', 'batches': batches, 'query': query})
+
+
+@role_required(User.Role.ADMIN)
+def batch_create(request):
+    form = ClassBatchForm(request.POST or None, initial={'level': request.GET.get('level')})
+    if request.method == 'POST' and form.is_valid():
+        batch = form.save()
+        messages.success(request, f'{batch} created.')
+        return redirect('accounts:batch_detail', pk=batch.pk)
+    return render(request, 'dashboard/batches/form.html', {'dashboard_role': 'Admin', 'eyebrow': 'Academic structure', 'form': form, 'mode': 'Create', 'batch': None})
+
+
+@role_required(User.Role.ADMIN)
+def batch_detail(request, pk):
+    batch = ClassBatch.objects.filter(pk=pk).select_related('level', 'teacher').prefetch_related('enrollments__student__user', 'enrollments__student__current_level').annotate(active_enrollment_count=Count('enrollments', filter=Q(enrollments__is_active=True))).first()
+    if not batch:
+        raise PermissionDenied
+    enrollment_form = EnrollmentForm(batch=batch)
+    return render(request, 'dashboard/batches/detail.html', {'dashboard_role': 'Admin', 'eyebrow': 'Academic structure', 'batch': batch, 'enrollment_form': enrollment_form})
+
+
+@role_required(User.Role.ADMIN)
+def batch_edit(request, pk):
+    batch = ClassBatch.objects.filter(pk=pk).select_related('level', 'teacher').first()
+    if not batch:
+        raise PermissionDenied
+    form = ClassBatchForm(request.POST or None, instance=batch)
+    if request.method == 'POST' and form.is_valid():
+        form.save()
+        messages.success(request, 'Class/batch updated.')
+        return redirect('accounts:batch_detail', pk=batch.pk)
+    return render(request, 'dashboard/batches/form.html', {'dashboard_role': 'Admin', 'eyebrow': 'Academic structure', 'form': form, 'mode': 'Edit', 'batch': batch})
+
+
+@role_required(User.Role.ADMIN)
+def batch_delete(request, pk):
+    batch = ClassBatch.objects.filter(pk=pk).first()
+    if not batch:
+        raise PermissionDenied
+    if request.method == 'POST':
+        name = str(batch)
+        batch.delete()
+        messages.success(request, f'{name} was deleted.')
+        return redirect('accounts:batch_list')
+    return render(request, 'dashboard/batches/delete.html', {'dashboard_role': 'Admin', 'eyebrow': 'Academic structure', 'batch': batch})
+
+
+@role_required(User.Role.ADMIN)
+def batch_enroll_student(request, pk):
+    batch = ClassBatch.objects.filter(pk=pk).select_related('level', 'teacher').prefetch_related('enrollments__student__user', 'enrollments__student__current_level').annotate(active_enrollment_count=Count('enrollments', filter=Q(enrollments__is_active=True))).first()
+    if not batch:
+        raise PermissionDenied
+    form = EnrollmentForm(request.POST or None, batch=batch)
+    if request.method == 'POST' and form.is_valid():
+        enrollment = form.save()
+        messages.success(request, f'{enrollment.student.user.get_full_name() or enrollment.student.user.email} is enrolled in {batch}.')
+        return redirect('accounts:batch_detail', pk=batch.pk)
+    return render(request, 'dashboard/batches/detail.html', {'dashboard_role': 'Admin', 'eyebrow': 'Academic structure', 'batch': batch, 'enrollment_form': form})
+
+
+@role_required(User.Role.ADMIN)
+def batch_unenroll_student(request, pk, enrollment_id):
+    batch = ClassBatch.objects.filter(pk=pk).first()
+    if not batch:
+        raise PermissionDenied
+    enrollment = Enrollment.objects.filter(pk=enrollment_id, class_batch=batch, is_active=True).select_related('student').first()
+    if not enrollment:
+        raise PermissionDenied
+    if request.method == 'POST':
+        student = enrollment.student
+        enrollment.is_active = False
+        enrollment.save(update_fields=['is_active'])
+        if student.current_level_id == batch.level_id:
+            student.current_level = None
+            student.save(update_fields=['current_level'])
+        messages.success(request, f'{student.user.get_full_name() or student.user.email} was removed from {batch}.')
+    return redirect('accounts:batch_detail', pk=batch.pk)
 
 
 @role_required(User.Role.ADMIN)
