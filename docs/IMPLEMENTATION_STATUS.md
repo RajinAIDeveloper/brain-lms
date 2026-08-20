@@ -12,6 +12,8 @@
 - Django admin registration for onboarding entities.
 - Repeatable `seed_demo` management command.
 - Automated tests for demo login redirects, dashboard rendering, relationships, permissions, and admin user creation.
+- Dedicated Admin account-creation screen for Teacher, Student, and Parent users with duplicate-email and password validation.
+- Admin workspace sidebar now includes Create users and Teachers; teacher management has list/search, create, detail, edit, and safe delete flows.
 
 ## Validation command
 

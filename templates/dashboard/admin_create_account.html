@@ -1,0 +1,17 @@
+{% extends 'dashboard/base.html' %}
+{% block title %}Create account · Brain Gym{% endblock %}
+{% block dashboard_content %}
+<div class="max-w-3xl mt-10">
+  <a href="{% url 'accounts:admin_dashboard' %}" class="text-sm font-semibold text-indigo-600">← Back to overview</a>
+  <div class="card animate-in mt-5 p-7 sm:p-9">
+    <div class="max-w-xl"><p class="text-sm font-semibold text-indigo-600">New academy member</p><h2 class="display text-3xl font-bold mt-2">Create an account</h2><p class="text-slate-500 mt-2">Choose a role and set a temporary password. The account can sign in immediately.</p></div>
+    <form method="post" class="mt-9">{% csrf_token %}{% if form.non_field_errors %}<div class="rounded-xl bg-red-50 text-red-700 p-4 text-sm mb-5">{{ form.non_field_errors }}</div>{% endif %}
+      <div class="grid sm:grid-cols-2 gap-5">
+        {% for field in form %}<div class="{% if field.name == 'email' or field.name == 'role' or field.name == 'password1' or field.name == 'password2' %}sm:col-span-2{% endif %}"><label for="{{ field.id_for_label }}" class="text-sm font-semibold text-slate-700">{{ field.label }}</label>{{ field }}{% if field.help_text %}<p class="text-xs text-slate-400 mt-1">{{ field.help_text }}</p>{% endif %}{% for error in field.errors %}<p class="text-xs text-red-600 mt-1">{{ error }}</p>{% endfor %}</div>{% endfor %}
+      </div>
+      <div class="flex justify-end gap-3 mt-8"><a href="{% url 'accounts:admin_dashboard' %}" class="rounded-xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-600">Cancel</a><button type="submit" class="rounded-xl bg-ink text-white px-6 py-3 text-sm font-semibold">Create account</button></div>
+    </form>
+  </div>
+</div>
+<script>document.querySelectorAll('input,select').forEach(input=>input.classList.add('mt-2','w-full','rounded-xl','border','border-slate-200','px-4','py-3','outline-none','focus:border-indigo-500','focus:ring-4','focus:ring-indigo-100'));document.querySelectorAll('select').forEach(input=>input.classList.add('bg-white'))</script>
+{% endblock %}

@@ -1,1 +1,18 @@
-{% extends 'dashboard/base.html' %}{% block title %}Admin dashboard · Brain Gym{% endblock %}{% block dashboard_content %}<div class="grid sm:grid-cols-2 xl:grid-cols-4 gap-4 mt-10">{% for label,value,caption in summary %}<div class="card animate-in p-6"><p class="text-sm text-slate-500">{{ label }}</p><p class="display text-4xl font-bold mt-4">{{ value }}</p><p class="text-xs text-slate-400 mt-2">{{ caption }}</p></div>{% endfor %}</div><div class="card animate-in mt-6 p-7"><div class="flex justify-between items-center"><div><h2 class="display text-xl font-bold">Academy is ready to grow</h2><p class="text-slate-500 mt-1">Use the Django admin to create curriculum, questions, classes, and reports.</p></div><a href="{% url 'admin:index' %}" class="rounded-xl bg-ink text-white px-5 py-3 text-sm font-semibold">Open admin ↗</a></div></div>{% endblock %}
+{% extends 'dashboard/base.html' %}
+{% block title %}Admin dashboard · Brain Gym{% endblock %}
+{% block dashboard_content %}
+<div class="grid sm:grid-cols-2 xl:grid-cols-4 gap-4 mt-10">
+  {% for label,value,caption in summary %}
+  <div class="card animate-in p-6"><p class="text-sm text-slate-500">{{ label }}</p><p class="display text-4xl font-bold mt-4">{{ value }}</p><p class="text-xs text-slate-400 mt-2">{{ caption }}</p></div>
+  {% endfor %}
+</div>
+<div class="grid xl:grid-cols-[1.3fr_.7fr] gap-6 mt-6">
+  <section class="card animate-in p-7">
+    <div class="flex justify-between items-center gap-4"><div><h2 class="display text-xl font-bold">People at Brain Gym</h2><p class="text-slate-500 mt-1">Create access for your teaching and learning community.</p></div><a href="{% url 'accounts:admin_create_account' %}" class="shrink-0 rounded-xl bg-ink text-white px-5 py-3 text-sm font-semibold">Create account +</a></div>
+    <div class="mt-7 divide-y divide-slate-100">
+      {% for account in recent_accounts %}<div class="py-4 flex justify-between items-center"><div><p class="font-semibold">{{ account.get_full_name|default:account.email }}</p><p class="text-xs text-slate-400 mt-1">{{ account.email }}</p></div><span class="rounded-full bg-indigo-50 text-indigo-700 px-3 py-1 text-xs font-bold">{{ account.get_role_display }}</span></div>{% empty %}<p class="py-5 text-slate-500">No accounts yet.</p>{% endfor %}
+    </div>
+  </section>
+  <section class="card animate-in p-7 bg-gradient-to-br from-indigo-600 to-violet-600 text-white"><p class="text-indigo-100 text-sm">Quick setup</p><h2 class="display text-2xl font-bold mt-2">Your academy is ready to grow</h2><p class="text-indigo-100 mt-3 text-sm leading-6">Create accounts here, then use the admin workspace to assign classes, levels, and enrollments.</p><a href="{% url 'admin:index' %}" class="inline-block mt-7 rounded-xl bg-white text-indigo-700 px-5 py-3 text-sm font-bold">Open admin workspace ↗</a></section>
+</div>
+{% endblock %}

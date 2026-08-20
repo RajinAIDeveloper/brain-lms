@@ -1,10 +1,14 @@
 from functools import wraps
 
 from django.contrib.auth.decorators import login_required
+from django.contrib import messages
 from django.core.exceptions import PermissionDenied
+from django.db.models import Q
+from django.db.models.deletion import ProtectedError
 from django.shortcuts import redirect, render
 
 from .models import ClassBatch, Enrollment, ParentStudentLink, User
+from .forms import AdminAccountCreationForm, TeacherAccountCreationForm, TeacherEditForm
 
 
 def role_required(*roles):
@@ -38,7 +42,80 @@ def admin_dashboard(request):
         ('Active classes', ClassBatch.objects.filter(is_active=True).count(), 'Teacher-led learning groups'),
         ('Enrollments', Enrollment.objects.filter(is_active=True).count(), 'Students in active classes'),
     ]}
+    context['recent_accounts'] = User.objects.exclude(pk=request.user.pk).order_by('-date_joined')[:6]
     return render(request, 'dashboard/admin.html', context)
+
+
+@role_required(User.Role.ADMIN)
+def admin_users(request):
+    return render(request, 'dashboard/admin_users.html', {'dashboard_role': 'Admin', 'eyebrow': 'People and access'})
+
+
+@role_required(User.Role.ADMIN)
+def admin_create_account(request):
+    form = AdminAccountCreationForm(request.POST or None, initial={'role': request.GET.get('role', User.Role.STUDENT)})
+    if request.method == 'POST' and form.is_valid():
+        account = form.save()
+        messages.success(request, f'{account.get_role_display()} account created for {account.get_full_name() or account.email}.')
+        return redirect('accounts:admin_dashboard')
+    return render(request, 'dashboard/admin_create_account.html', {'dashboard_role': 'Admin', 'eyebrow': 'Academy setup', 'form': form})
+
+
+@role_required(User.Role.ADMIN)
+def teacher_list(request):
+    query = request.GET.get('q', '').strip()
+    teachers = User.objects.filter(role=User.Role.TEACHER).select_related('teacher_profile').order_by('first_name', 'last_name', 'email')
+    if query:
+        teachers = teachers.filter(Q(first_name__icontains=query) | Q(last_name__icontains=query) | Q(email__icontains=query))
+    return render(request, 'dashboard/teachers/list.html', {'dashboard_role': 'Admin', 'eyebrow': 'People and access', 'teachers': teachers, 'query': query})
+
+
+@role_required(User.Role.ADMIN)
+def teacher_create(request):
+    form = TeacherAccountCreationForm(request.POST or None, initial={'role': User.Role.TEACHER})
+    if request.method == 'POST' and form.is_valid():
+        teacher = form.save()
+        messages.success(request, f'Teacher account created for {teacher.get_full_name() or teacher.email}.')
+        return redirect('accounts:teacher_detail', pk=teacher.pk)
+    return render(request, 'dashboard/teachers/form.html', {'dashboard_role': 'Admin', 'eyebrow': 'People and access', 'form': form, 'mode': 'Create', 'teacher': None})
+
+
+@role_required(User.Role.ADMIN)
+def teacher_detail(request, pk):
+    teacher = User.objects.filter(pk=pk, role=User.Role.TEACHER).select_related('teacher_profile').prefetch_related('teaching_classes__level').first()
+    if not teacher:
+        raise PermissionDenied
+    return render(request, 'dashboard/teachers/detail.html', {'dashboard_role': 'Admin', 'eyebrow': 'People and access', 'teacher': teacher})
+
+
+@role_required(User.Role.ADMIN)
+def teacher_edit(request, pk):
+    teacher = User.objects.filter(pk=pk, role=User.Role.TEACHER).select_related('teacher_profile').first()
+    if not teacher:
+        raise PermissionDenied
+    form = TeacherEditForm(request.POST or None, user=teacher)
+    if request.method == 'POST' and form.is_valid():
+        form.save()
+        messages.success(request, 'Teacher profile updated.')
+        return redirect('accounts:teacher_detail', pk=teacher.pk)
+    return render(request, 'dashboard/teachers/form.html', {'dashboard_role': 'Admin', 'eyebrow': 'People and access', 'form': form, 'mode': 'Edit', 'teacher': teacher})
+
+
+@role_required(User.Role.ADMIN)
+def teacher_delete(request, pk):
+    teacher = User.objects.filter(pk=pk, role=User.Role.TEACHER).select_related('teacher_profile').first()
+    if not teacher:
+        raise PermissionDenied
+    if request.method == 'POST':
+        name = teacher.get_full_name() or teacher.email
+        try:
+            teacher.delete()
+        except ProtectedError:
+            messages.error(request, 'This teacher is assigned to one or more classes. Remove those assignments before deleting the account.')
+            return redirect('accounts:teacher_detail', pk=pk)
+        messages.success(request, f'Teacher account for {name} was deleted.')
+        return redirect('accounts:teacher_list')
+    return render(request, 'dashboard/teachers/delete.html', {'dashboard_role': 'Admin', 'eyebrow': 'People and access', 'teacher': teacher})
 
 
 @role_required(User.Role.TEACHER)
