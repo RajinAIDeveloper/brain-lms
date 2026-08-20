@@ -2,7 +2,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from .management.commands.seed_demo import DEMO_PASSWORD
-from .models import ClassBatch, Enrollment, Level, ParentProfile, ParentStudentLink, StudentProfile, TeacherProfile, User
+from .models import ClassBatch, ClassHoliday, ClassSchedule, Enrollment, Level, ParentProfile, ParentStudentLink, StudentProfile, TeacherProfile, User
 
 
 class AuthenticationAndOnboardingTests(TestCase):
@@ -201,7 +201,7 @@ class AuthenticationAndOnboardingTests(TestCase):
         teacher = User.objects.get(email='teacher@braingym.local')
         second_student = User.objects.create_user(email='batch.student@braingym.local', password='SecureMVP!123', role=User.Role.STUDENT, first_name='Batch', last_name='Student')
         self.assertEqual(self.client.get('/dashboard/admin/classes/').status_code, 200)
-        create_response = self.client.post('/dashboard/admin/classes/new/', {'name': 'Batch B', 'level': level.pk, 'teacher': teacher.pk, 'is_active': 'on'})
+        create_response = self.client.post('/dashboard/admin/classes/new/', {'name': 'Batch B', 'level': level.pk, 'teacher': teacher.pk, 'start_date': '2026-01-01', 'end_date': '2026-12-31', 'is_active': 'on'})
         batch = ClassBatch.objects.get(name='Batch B')
         self.assertRedirects(create_response, f'/dashboard/admin/classes/{batch.pk}/')
         self.assertEqual(self.client.get(f'/dashboard/admin/classes/{batch.pk}/').status_code, 200)
@@ -211,7 +211,7 @@ class AuthenticationAndOnboardingTests(TestCase):
         self.assertTrue(enrollment.is_active)
         second_student.student_profile.refresh_from_db()
         self.assertEqual(second_student.student_profile.current_level_id, level.pk)
-        edit_response = self.client.post(f'/dashboard/admin/classes/{batch.pk}/edit/', {'name': 'Batch B Updated', 'level': level.pk, 'teacher': teacher.pk, 'is_active': 'on'})
+        edit_response = self.client.post(f'/dashboard/admin/classes/{batch.pk}/edit/', {'name': 'Batch B Updated', 'level': level.pk, 'teacher': teacher.pk, 'start_date': '2026-01-01', 'end_date': '2026-12-31', 'is_active': 'on'})
         self.assertRedirects(edit_response, f'/dashboard/admin/classes/{batch.pk}/')
         batch.refresh_from_db()
         self.assertEqual(batch.name, 'Batch B Updated')
@@ -222,5 +222,32 @@ class AuthenticationAndOnboardingTests(TestCase):
         delete_response = self.client.post(f'/dashboard/admin/classes/{batch.pk}/delete/')
         self.assertRedirects(delete_response, '/dashboard/admin/classes/')
         self.assertFalse(ClassBatch.objects.filter(pk=batch.pk).exists())
+
+    def test_class_weekly_schedule_and_holidays(self):
+        self.client.login(email='admin@braingym.local', password=DEMO_PASSWORD)
+        batch = ClassBatch.objects.get(name='Batch A')
+        self.assertEqual(self.client.get(f'/dashboard/admin/classes/{batch.pk}/').status_code, 200)
+        tuesday = self.client.post(f'/dashboard/admin/classes/{batch.pk}/schedule/new/', {'weekday': 1, 'start_time': '17:30', 'end_time': '18:40'})
+        self.assertRedirects(tuesday, f'/dashboard/admin/classes/{batch.pk}/')
+        thursday = self.client.post(f'/dashboard/admin/classes/{batch.pk}/schedule/new/', {'weekday': 3, 'start_time': '19:30', 'end_time': '20:50'})
+        self.assertRedirects(thursday, f'/dashboard/admin/classes/{batch.pk}/')
+        self.assertEqual(ClassSchedule.objects.filter(class_batch=batch).count(), 2)
+        overlap = self.client.post(f'/dashboard/admin/classes/{batch.pk}/schedule/new/', {'weekday': 1, 'start_time': '18:00', 'end_time': '19:00'})
+        self.assertEqual(overlap.status_code, 200)
+        self.assertContains(overlap, 'overlaps')
+        holiday = self.client.post(f'/dashboard/admin/classes/{batch.pk}/holiday/new/', {'date': '2026-02-03', 'note': 'School holiday'})
+        self.assertRedirects(holiday, f'/dashboard/admin/classes/{batch.pk}/')
+        holiday_record = ClassHoliday.objects.get(class_batch=batch, date='2026-02-03')
+        outside_range = self.client.post(f'/dashboard/admin/classes/{batch.pk}/holiday/new/', {'date': '2027-02-03', 'note': 'Outside range'})
+        self.assertEqual(outside_range.status_code, 200)
+        self.assertContains(outside_range, 'within the class date range')
+        schedule = ClassSchedule.objects.get(class_batch=batch, weekday=1)
+        edit_schedule = self.client.post(f'/dashboard/admin/classes/{batch.pk}/schedule/{schedule.pk}/edit/', {'weekday': 1, 'start_time': '18:00', 'end_time': '19:10'})
+        self.assertRedirects(edit_schedule, f'/dashboard/admin/classes/{batch.pk}/')
+        remove_schedule = self.client.post(f'/dashboard/admin/classes/{batch.pk}/schedule/{schedule.pk}/delete/')
+        self.assertRedirects(remove_schedule, f'/dashboard/admin/classes/{batch.pk}/')
+        remove_holiday = self.client.post(f'/dashboard/admin/classes/{batch.pk}/holiday/{holiday_record.pk}/delete/')
+        self.assertRedirects(remove_holiday, f'/dashboard/admin/classes/{batch.pk}/')
+        self.assertFalse(ClassHoliday.objects.filter(pk=holiday_record.pk).exists())
 
 # Create your tests here.

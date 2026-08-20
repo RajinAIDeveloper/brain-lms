@@ -1,3 +1,5 @@
+from datetime import date
+
 from django.core.management.base import BaseCommand
 
 from accounts.models import ClassBatch, Enrollment, Level, ParentProfile, ParentStudentLink, StudentProfile, TeacherProfile, User
@@ -37,6 +39,8 @@ class Command(BaseCommand):
         parent_profile, _ = ParentProfile.objects.get_or_create(user=parent)
         class_batch, _ = ClassBatch.objects.get_or_create(name='Batch A', level=level, defaults={'teacher': teacher})
         class_batch.teacher = teacher
+        class_batch.start_date = date(2026, 1, 1)
+        class_batch.end_date = date(2026, 12, 31)
         class_batch.is_active = True
         class_batch.save()
         Enrollment.objects.get_or_create(student=student_profile, class_batch=class_batch, defaults={'is_active': True})

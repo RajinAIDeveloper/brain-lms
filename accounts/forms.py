@@ -1,6 +1,6 @@
 from django import forms
 
-from .models import ClassBatch, Enrollment, Level, ParentStudentLink, StudentProfile, User
+from .models import ClassBatch, ClassHoliday, ClassSchedule, Enrollment, Level, ParentStudentLink, StudentProfile, User
 
 
 class AdminAccountCreationForm(forms.ModelForm):
@@ -194,11 +194,13 @@ class LevelForm(forms.ModelForm):
 class ClassBatchForm(forms.ModelForm):
     class Meta:
         model = ClassBatch
-        fields = ('name', 'level', 'teacher', 'is_active')
-        widgets = {'name': forms.TextInput(attrs={'placeholder': 'Batch A'}), 'level': forms.Select(), 'teacher': forms.Select()}
+        fields = ('name', 'level', 'teacher', 'start_date', 'end_date', 'is_active')
+        widgets = {'name': forms.TextInput(attrs={'placeholder': 'Batch A'}), 'level': forms.Select(), 'teacher': forms.Select(), 'start_date': forms.DateInput(attrs={'type': 'date'}), 'end_date': forms.DateInput(attrs={'type': 'date'})}
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.fields['start_date'].required = True
+        self.fields['end_date'].required = True
         self.fields['teacher'].queryset = User.objects.filter(role=User.Role.TEACHER, is_active=True).order_by('first_name', 'last_name', 'email')
         self.fields['teacher'].label_from_instance = lambda teacher: teacher.get_full_name() or teacher.email
 
@@ -207,6 +209,66 @@ class ClassBatchForm(forms.ModelForm):
         if teacher.role != User.Role.TEACHER:
             raise forms.ValidationError('Only teacher accounts can lead a class.')
         return teacher
+
+
+class ClassScheduleForm(forms.ModelForm):
+    class Meta:
+        model = ClassSchedule
+        fields = ('weekday', 'start_time', 'end_time')
+        widgets = {'weekday': forms.Select(), 'start_time': forms.TimeInput(format='%H:%M', attrs={'type': 'time'}), 'end_time': forms.TimeInput(format='%H:%M', attrs={'type': 'time'})}
+
+    def __init__(self, *args, batch, **kwargs):
+        self.batch = batch
+        super().__init__(*args, **kwargs)
+        self.instance.class_batch = batch
+
+    def clean(self):
+        cleaned = super().clean()
+        start = cleaned.get('start_time')
+        end = cleaned.get('end_time')
+        if start and end and end <= start:
+            self.add_error('end_time', 'End time must be after start time.')
+        if start and end and cleaned.get('weekday') is not None:
+            overlaps = ClassSchedule.objects.filter(class_batch=self.batch, weekday=cleaned['weekday'], start_time__lt=end, end_time__gt=start).exclude(pk=self.instance.pk)
+            if overlaps.exists():
+                self.add_error(None, 'This schedule overlaps another schedule on the same day.')
+        return cleaned
+
+    def save(self, commit=True):
+        schedule = super().save(commit=False)
+        schedule.class_batch = self.batch
+        if commit:
+            schedule.save()
+        return schedule
+
+
+class ClassHolidayForm(forms.ModelForm):
+    class Meta:
+        model = ClassHoliday
+        fields = ('date', 'note')
+        widgets = {'date': forms.DateInput(attrs={'type': 'date'}), 'note': forms.TextInput(attrs={'placeholder': 'Public holiday, school event, etc.'})}
+
+    def __init__(self, *args, batch, **kwargs):
+        self.batch = batch
+        super().__init__(*args, **kwargs)
+        self.instance.class_batch = batch
+
+    def clean_date(self):
+        date = self.cleaned_data['date']
+        if self.batch.start_date and date < self.batch.start_date:
+            raise forms.ValidationError('Holiday must be within the class date range.')
+        if self.batch.end_date and date > self.batch.end_date:
+            raise forms.ValidationError('Holiday must be within the class date range.')
+        if ClassHoliday.objects.filter(class_batch=self.batch, date=date).exclude(pk=self.instance.pk).exists():
+            raise forms.ValidationError('This date is already marked as a holiday.')
+        return date
+
+    def save(self, commit=True):
+        holiday = super().save(commit=False)
+        holiday.class_batch = self.batch
+        if commit:
+            holiday.save()
+        return holiday
 
 
 class EnrollmentForm(forms.Form):

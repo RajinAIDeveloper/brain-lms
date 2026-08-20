@@ -17,6 +17,8 @@
 - Student and Parent management now include list/search, create, detail, edit, and delete flows; student details expose level/enrollment context and parent details expose linked children.
 - Admins can link any active student to a parent from the parent detail page, link multiple students per parent, prevent duplicates, and unlink relationships without deleting accounts.
 - Academic management now has sidebar links and full CRUD for levels and classes/batches. Levels can contain many batches; batches assign one teacher and support student enrollment, single-active-class movement, and unenrollment.
+- Applied migration `accounts.0002_alter_enrollment_options` to keep active enrollments first when displaying a student's class context.
+- Classes now support required date-range entry, recurring weekday/time schedules, schedule overlap validation, and date-bounded holidays with add/edit/remove controls. Migration `accounts.0003_classbatch_end_date_classbatch_start_date_and_more` is applied.
 
 ## Validation command
 

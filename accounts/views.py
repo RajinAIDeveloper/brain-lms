@@ -7,7 +7,7 @@ from django.db.models import Count, Q
 from django.db.models.deletion import ProtectedError
 from django.shortcuts import redirect, render
 
-from .models import ClassBatch, Enrollment, Level, ParentStudentLink, User
+from .models import ClassBatch, ClassHoliday, ClassSchedule, Enrollment, Level, ParentStudentLink, User
 from .forms import (
     AdminAccountCreationForm,
     ParentAccountCreationForm,
@@ -16,6 +16,8 @@ from .forms import (
     StudentEditForm,
     ParentStudentLinkForm,
     ClassBatchForm,
+    ClassHolidayForm,
+    ClassScheduleForm,
     EnrollmentForm,
     LevelForm,
     TeacherAccountCreationForm,
@@ -141,11 +143,76 @@ def batch_create(request):
 
 @role_required(User.Role.ADMIN)
 def batch_detail(request, pk):
-    batch = ClassBatch.objects.filter(pk=pk).select_related('level', 'teacher').prefetch_related('enrollments__student__user', 'enrollments__student__current_level').annotate(active_enrollment_count=Count('enrollments', filter=Q(enrollments__is_active=True))).first()
+    batch = ClassBatch.objects.filter(pk=pk).select_related('level', 'teacher').prefetch_related('enrollments__student__user', 'enrollments__student__current_level', 'schedules', 'holidays').annotate(active_enrollment_count=Count('enrollments', filter=Q(enrollments__is_active=True))).first()
     if not batch:
         raise PermissionDenied
     enrollment_form = EnrollmentForm(batch=batch)
-    return render(request, 'dashboard/batches/detail.html', {'dashboard_role': 'Admin', 'eyebrow': 'Academic structure', 'batch': batch, 'enrollment_form': enrollment_form})
+    return render(request, 'dashboard/batches/detail.html', {'dashboard_role': 'Admin', 'eyebrow': 'Academic structure', 'batch': batch, 'enrollment_form': enrollment_form, 'schedule_form': ClassScheduleForm(batch=batch), 'holiday_form': ClassHolidayForm(batch=batch)})
+
+
+def _batch_schedule_context(batch, schedule_form=None, holiday_form=None, enrollment_form=None):
+    return {'dashboard_role': 'Admin', 'eyebrow': 'Academic structure', 'batch': batch, 'enrollment_form': enrollment_form or EnrollmentForm(batch=batch), 'schedule_form': schedule_form or ClassScheduleForm(batch=batch), 'holiday_form': holiday_form or ClassHolidayForm(batch=batch)}
+
+
+@role_required(User.Role.ADMIN)
+def batch_add_schedule(request, pk):
+    batch = ClassBatch.objects.filter(pk=pk).select_related('level', 'teacher').prefetch_related('enrollments__student__user', 'enrollments__student__current_level', 'schedules', 'holidays').annotate(active_enrollment_count=Count('enrollments', filter=Q(enrollments__is_active=True))).first()
+    if not batch:
+        raise PermissionDenied
+    form = ClassScheduleForm(request.POST or None, batch=batch)
+    if request.method == 'POST' and form.is_valid():
+        form.save()
+        messages.success(request, 'Weekly class schedule added.')
+        return redirect('accounts:batch_detail', pk=batch.pk)
+    return render(request, 'dashboard/batches/schedule_form.html', {'dashboard_role': 'Admin', 'eyebrow': 'Academic structure', 'batch': batch, 'form': form, 'mode': 'Add'})
+
+
+@role_required(User.Role.ADMIN)
+def batch_edit_schedule(request, pk, schedule_id):
+    schedule = ClassSchedule.objects.filter(pk=schedule_id, class_batch_id=pk).select_related('class_batch__level', 'class_batch__teacher').first()
+    if not schedule:
+        raise PermissionDenied
+    form = ClassScheduleForm(request.POST or None, instance=schedule, batch=schedule.class_batch)
+    if request.method == 'POST' and form.is_valid():
+        form.save()
+        messages.success(request, 'Weekly class schedule updated.')
+        return redirect('accounts:batch_detail', pk=pk)
+    return render(request, 'dashboard/batches/schedule_form.html', {'dashboard_role': 'Admin', 'eyebrow': 'Academic structure', 'batch': schedule.class_batch, 'form': form, 'mode': 'Edit'})
+
+
+@role_required(User.Role.ADMIN)
+def batch_delete_schedule(request, pk, schedule_id):
+    schedule = ClassSchedule.objects.filter(pk=schedule_id, class_batch_id=pk).first()
+    if not schedule:
+        raise PermissionDenied
+    if request.method == 'POST':
+        schedule.delete()
+        messages.success(request, 'Weekly class schedule removed.')
+    return redirect('accounts:batch_detail', pk=pk)
+
+
+@role_required(User.Role.ADMIN)
+def batch_add_holiday(request, pk):
+    batch = ClassBatch.objects.filter(pk=pk).select_related('level', 'teacher').prefetch_related('schedules', 'holidays').first()
+    if not batch:
+        raise PermissionDenied
+    form = ClassHolidayForm(request.POST or None, batch=batch)
+    if request.method == 'POST' and form.is_valid():
+        form.save()
+        messages.success(request, 'Holiday added. The class will not meet on that date.')
+        return redirect('accounts:batch_detail', pk=batch.pk)
+    return render(request, 'dashboard/batches/holiday_form.html', {'dashboard_role': 'Admin', 'eyebrow': 'Academic structure', 'batch': batch, 'form': form})
+
+
+@role_required(User.Role.ADMIN)
+def batch_delete_holiday(request, pk, holiday_id):
+    holiday = ClassHoliday.objects.filter(pk=holiday_id, class_batch_id=pk).first()
+    if not holiday:
+        raise PermissionDenied
+    if request.method == 'POST':
+        holiday.delete()
+        messages.success(request, 'Holiday removed from this class.')
+    return redirect('accounts:batch_detail', pk=pk)
 
 
 @role_required(User.Role.ADMIN)
@@ -184,7 +251,7 @@ def batch_enroll_student(request, pk):
         enrollment = form.save()
         messages.success(request, f'{enrollment.student.user.get_full_name() or enrollment.student.user.email} is enrolled in {batch}.')
         return redirect('accounts:batch_detail', pk=batch.pk)
-    return render(request, 'dashboard/batches/detail.html', {'dashboard_role': 'Admin', 'eyebrow': 'Academic structure', 'batch': batch, 'enrollment_form': form})
+    return render(request, 'dashboard/batches/detail.html', _batch_schedule_context(batch, enrollment_form=form))
 
 
 @role_required(User.Role.ADMIN)
