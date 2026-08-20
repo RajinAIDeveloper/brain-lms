@@ -1,6 +1,6 @@
 from django import forms
 
-from .models import Level, User
+from .models import Level, ParentStudentLink, StudentProfile, User
 
 
 class AdminAccountCreationForm(forms.ModelForm):
@@ -159,3 +159,23 @@ class ParentEditForm(forms.Form):
         self.user.is_active = self.cleaned_data['is_active']
         self.user.save()
         return self.user
+
+
+class ParentStudentLinkForm(forms.Form):
+    student = forms.ModelChoiceField(queryset=StudentProfile.objects.none(), label='Student to link')
+    relationship = forms.CharField(max_length=40, initial='Parent', label='Relationship')
+
+    def __init__(self, *args, parent, **kwargs):
+        self.parent = parent
+        super().__init__(*args, **kwargs)
+        self.fields['student'].queryset = StudentProfile.objects.filter(user__role=User.Role.STUDENT, user__is_active=True).select_related('user', 'current_level').order_by('user__first_name', 'user__last_name', 'user__email')
+        self.fields['student'].label_from_instance = lambda student: f"{student.user.get_full_name() or student.user.email} · {student.current_level or 'Level not assigned'}"
+
+    def clean_student(self):
+        student = self.cleaned_data['student']
+        if ParentStudentLink.objects.filter(parent=self.parent, student=student).exists():
+            raise forms.ValidationError('This student is already linked to this parent.')
+        return student
+
+    def save(self):
+        return ParentStudentLink.objects.create(parent=self.parent, student=self.cleaned_data['student'], relationship=self.cleaned_data['relationship'].strip() or 'Parent')

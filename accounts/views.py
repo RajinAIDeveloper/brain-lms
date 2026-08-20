@@ -14,6 +14,7 @@ from .forms import (
     ParentEditForm,
     StudentAccountCreationForm,
     StudentEditForm,
+    ParentStudentLinkForm,
     TeacherAccountCreationForm,
     TeacherEditForm,
 )
@@ -203,7 +204,36 @@ def parent_detail(request, pk):
     parent = User.objects.filter(pk=pk, role=User.Role.PARENT).select_related('parent_profile').prefetch_related('parent_profile__children__student__current_level').first()
     if not parent:
         raise PermissionDenied
-    return render(request, 'dashboard/parents/detail.html', {'dashboard_role': 'Admin', 'eyebrow': 'People and access', 'parent': parent})
+    link_form = ParentStudentLinkForm(parent=parent.parent_profile)
+    return render(request, 'dashboard/parents/detail.html', {'dashboard_role': 'Admin', 'eyebrow': 'People and access', 'parent': parent, 'link_form': link_form})
+
+
+@role_required(User.Role.ADMIN)
+def parent_link_student(request, pk):
+    parent = User.objects.filter(pk=pk, role=User.Role.PARENT).select_related('parent_profile').prefetch_related('parent_profile__children__student__current_level').first()
+    if not parent:
+        raise PermissionDenied
+    form = ParentStudentLinkForm(request.POST or None, parent=parent.parent_profile)
+    if request.method == 'POST' and form.is_valid():
+        link = form.save()
+        messages.success(request, f'{link.student.user.get_full_name() or link.student.user.email} is now linked to this parent.')
+        return redirect('accounts:parent_detail', pk=parent.pk)
+    return render(request, 'dashboard/parents/detail.html', {'dashboard_role': 'Admin', 'eyebrow': 'People and access', 'parent': parent, 'link_form': form})
+
+
+@role_required(User.Role.ADMIN)
+def parent_unlink_student(request, pk, link_id):
+    parent = User.objects.filter(pk=pk, role=User.Role.PARENT).select_related('parent_profile').first()
+    if not parent:
+        raise PermissionDenied
+    link = ParentStudentLink.objects.filter(pk=link_id, parent=parent.parent_profile).select_related('student__user').first()
+    if not link:
+        raise PermissionDenied
+    if request.method == 'POST':
+        student_name = link.student.user.get_full_name() or link.student.user.email
+        link.delete()
+        messages.success(request, f'{student_name} was unlinked from this parent.')
+    return redirect('accounts:parent_detail', pk=parent.pk)
 
 
 @role_required(User.Role.ADMIN)

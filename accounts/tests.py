@@ -150,4 +150,30 @@ class AuthenticationAndOnboardingTests(TestCase):
         self.assertRedirects(delete_response, '/dashboard/admin/parents/')
         self.assertFalse(User.objects.filter(pk=parent.pk).exists())
 
+    def test_parent_can_be_linked_to_multiple_students_and_unlinked(self):
+        self.client.login(email='admin@braingym.local', password=DEMO_PASSWORD)
+        parent = User.objects.get(email='parent@braingym.local')
+        second_student = User.objects.create_user(email='second.student@braingym.local', password='SecureMVP!123', role=User.Role.STUDENT, first_name='Second', last_name='Student')
+        response = self.client.post(f'/dashboard/admin/parents/{parent.pk}/link-student/', {
+            'student': second_student.student_profile.pk, 'relationship': 'Guardian',
+        })
+        self.assertRedirects(response, f'/dashboard/admin/parents/{parent.pk}/')
+        self.assertEqual(parent.parent_profile.children.count(), 2)
+        duplicate = self.client.post(f'/dashboard/admin/parents/{parent.pk}/link-student/', {
+            'student': second_student.student_profile.pk, 'relationship': 'Guardian',
+        })
+        self.assertEqual(duplicate.status_code, 200)
+        self.assertContains(duplicate, 'already linked')
+        link = parent.parent_profile.children.get(student=second_student.student_profile)
+        unlink = self.client.post(f'/dashboard/admin/parents/{parent.pk}/unlink-student/{link.pk}/')
+        self.assertRedirects(unlink, f'/dashboard/admin/parents/{parent.pk}/')
+        self.assertEqual(parent.parent_profile.children.count(), 1)
+
+    def test_non_admin_cannot_link_students_to_parents(self):
+        parent = User.objects.get(email='parent@braingym.local')
+        student = User.objects.get(email='student@braingym.local')
+        self.client.login(email='teacher@braingym.local', password=DEMO_PASSWORD)
+        response = self.client.post(f'/dashboard/admin/parents/{parent.pk}/link-student/', {'student': student.student_profile.pk})
+        self.assertEqual(response.status_code, 403)
+
 # Create your tests here.

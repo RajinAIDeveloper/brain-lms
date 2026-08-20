@@ -15,6 +15,7 @@
 - Dedicated Admin account-creation screen for Teacher, Student, and Parent users with duplicate-email and password validation.
 - Admin workspace sidebar now includes Create users and Teachers; teacher management has list/search, create, detail, edit, and safe delete flows.
 - Student and Parent management now include list/search, create, detail, edit, and delete flows; student details expose level/enrollment context and parent details expose linked children.
+- Admins can link any active student to a parent from the parent detail page, link multiple students per parent, prevent duplicates, and unlink relationships without deleting accounts.
 
 ## Validation command
 
