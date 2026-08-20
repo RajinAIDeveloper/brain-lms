@@ -246,7 +246,8 @@ class QuestionBankForm(forms.ModelForm):
     def save(self, commit=True):
         bank = super().save(commit=False)
         bank.node = self.node
-        bank.created_by = self.created_by
+        if not bank.pk:
+            bank.created_by = self.created_by
         if commit:
             bank.save()
         return bank
@@ -279,6 +280,8 @@ class QuestionForm(forms.ModelForm):
         cleaned = super().clean()
         if cleaned.get('question_type') == Question.QuestionType.MULTIPLE_CHOICE and not cleaned.get('options'):
             self.add_error('options', 'Multiple-choice questions need at least one option.')
+        if cleaned.get('question_type') == Question.QuestionType.MULTIPLE_CHOICE and cleaned.get('options') and cleaned.get('correct_answer') not in [str(option) for option in cleaned['options']]:
+            self.add_error('correct_answer', 'The correct answer must match one of the options.')
         return cleaned
 
     def save(self, commit=True):
@@ -303,7 +306,8 @@ class AssignmentForm(forms.ModelForm):
     def save(self, commit=True):
         assignment = super().save(commit=False)
         assignment.node = self.node
-        assignment.created_by = self.created_by
+        if not assignment.pk:
+            assignment.created_by = self.created_by
         if commit:
             assignment.save()
         return assignment

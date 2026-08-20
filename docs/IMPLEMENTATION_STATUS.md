@@ -22,6 +22,7 @@
 - Students now have level-promotion history and Admin promotion controls. Enrollment history tracks ongoing/completed/left status and ended dates. Attendance records support present, absent, late, and excused states with per-class percentages.
 - Each class has a monthly roster calendar with scheduled-day highlighting, holiday colors, selected-day schedule times, and attendance entry for active students. Migration `accounts.0004_enrollment_ended_on_enrollment_status_levelpromotion_and_more` is applied.
 - Admin can promote students between levels with a promotion history and note. Student and Admin views show enrollment history, ongoing/completed/left class status, attendance counts, and per-class attendance percentages. Demo Batch A includes Tuesday and Thursday weekly schedule examples.
+- Curriculum studio now supports an unlimited self-referential tree under each level: Subject → Topic → Section → Subsection (and any further depth). Admins can create, edit, and delete nodes, attach assignments, and manage question banks with numeric or multiple-choice questions. Migration `accounts.0005_curriculumnode_assignment_questionbank_question` is applied.
 
 ## Validation command
 
@@ -32,4 +33,4 @@
 
 ## Next implementation slice
 
-Build Phase 3 from the MVP plan: question banks, questions, exercises, tests, and teacher-created assignments. Preserve the existing role boundaries and extend tests before adding new dashboard behaviour.
+Build the remaining Phase 3 learning objects from the MVP plan: exercises, tests, ordered question membership, and teacher-created assignment targeting. Preserve the existing role boundaries and extend tests before adding new dashboard behaviour.

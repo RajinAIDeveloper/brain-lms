@@ -2,7 +2,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from .management.commands.seed_demo import DEMO_PASSWORD
-from .models import Attendance, ClassBatch, ClassHoliday, ClassSchedule, Enrollment, Level, ParentProfile, ParentStudentLink, StudentProfile, TeacherProfile, User
+from .models import Assignment, Attendance, ClassBatch, ClassHoliday, ClassSchedule, CurriculumNode, Enrollment, Level, ParentProfile, ParentStudentLink, Question, QuestionBank, StudentProfile, TeacherProfile, User
 
 
 class AuthenticationAndOnboardingTests(TestCase):
@@ -279,5 +279,33 @@ class AuthenticationAndOnboardingTests(TestCase):
         holiday = ClassHoliday.objects.create(class_batch=batch, date='2026-02-10', note='Holiday')
         holiday_roster = self.client.get(f'/dashboard/admin/classes/{batch.pk}/roster/?month=2026-02&date=2026-02-10')
         self.assertContains(holiday_roster, 'HOLIDAY')
+
+    def test_admin_can_build_nested_curriculum_and_content(self):
+        self.client.login(email='admin@braingym.local', password=DEMO_PASSWORD)
+        level = Level.objects.get(code='L2')
+        self.assertEqual(self.client.get('/dashboard/admin/curriculum/').status_code, 200)
+        subject_response = self.client.post('/dashboard/admin/curriculum/nodes/new/', {'level': level.pk, 'title': 'Mental Math', 'node_type': 'SUBJECT', 'description': '', 'ordering': 0, 'is_active': 'on'})
+        subject = CurriculumNode.objects.get(title='Mental Math')
+        self.assertRedirects(subject_response, f'/dashboard/admin/curriculum/nodes/{subject.pk}/')
+        topic_response = self.client.post('/dashboard/admin/curriculum/nodes/new/', {'level': level.pk, 'parent': subject.pk, 'title': 'Addition', 'node_type': 'TOPIC', 'description': '', 'ordering': 0, 'is_active': 'on'})
+        topic = CurriculumNode.objects.get(title='Addition')
+        self.assertRedirects(topic_response, f'/dashboard/admin/curriculum/nodes/{topic.pk}/')
+        parent = topic
+        for index in range(3):
+            self.client.post('/dashboard/admin/curriculum/nodes/new/', {'level': level.pk, 'parent': parent.pk, 'title': f'Section {index}', 'node_type': 'SECTION' if index == 0 else 'SUBSECTION', 'description': '', 'ordering': index, 'is_active': 'on'})
+            parent = CurriculumNode.objects.get(title=f'Section {index}')
+        bank_response = self.client.post(f'/dashboard/admin/curriculum/nodes/{parent.pk}/question-banks/new/', {'name': 'Warm up', 'description': '', 'is_active': 'on'})
+        bank = QuestionBank.objects.get(name='Warm up')
+        self.assertRedirects(bank_response, f'/dashboard/admin/question-banks/{bank.pk}/')
+        question_response = self.client.post(f'/dashboard/admin/question-banks/{bank.pk}/questions/new/', {'prompt': '2 + 2?', 'question_type': 'NUMERIC', 'correct_answer': '4', 'options': '[]', 'explanation': '', 'difficulty': 1, 'is_active': 'on'})
+        self.assertRedirects(question_response, f'/dashboard/admin/question-banks/{bank.pk}/')
+        self.assertEqual(Question.objects.filter(bank=bank).count(), 1)
+        assignment_response = self.client.post(f'/dashboard/admin/curriculum/nodes/{parent.pk}/assignments/new/', {'title': 'Practice 1', 'instructions': 'Solve these.', 'due_date': '', 'is_published': 'on'})
+        self.assertRedirects(assignment_response, f'/dashboard/admin/curriculum/nodes/{parent.pk}/')
+        self.assertTrue(Assignment.objects.filter(node=parent, title='Practice 1').exists())
+
+    def test_non_admin_cannot_open_curriculum(self):
+        self.client.login(email='teacher@braingym.local', password=DEMO_PASSWORD)
+        self.assertEqual(self.client.get('/dashboard/admin/curriculum/').status_code, 403)
 
 # Create your tests here.
