@@ -108,4 +108,46 @@ class AuthenticationAndOnboardingTests(TestCase):
         self.assertRedirects(response, f'/dashboard/admin/teachers/{teacher.pk}/')
         self.assertTrue(User.objects.filter(pk=teacher.pk).exists())
 
+    def test_admin_student_crud(self):
+        self.client.login(email='admin@braingym.local', password=DEMO_PASSWORD)
+        self.assertEqual(self.client.get('/dashboard/admin/students/').status_code, 200)
+        level = Level.objects.first()
+        create_response = self.client.post('/dashboard/admin/students/new/', {
+            'first_name': 'Lina', 'last_name': 'Learner', 'email': 'lina@braingym.local',
+            'role': 'STUDENT', 'password1': 'SecureMVP!123', 'password2': 'SecureMVP!123',
+        })
+        student = User.objects.get(email='lina@braingym.local')
+        self.assertRedirects(create_response, f'/dashboard/admin/students/{student.pk}/')
+        self.assertEqual(self.client.get(f'/dashboard/admin/students/{student.pk}/').status_code, 200)
+        edit_response = self.client.post(f'/dashboard/admin/students/{student.pk}/edit/', {
+            'first_name': 'Lina', 'last_name': 'Learner', 'email': 'lina@braingym.local',
+            'current_level': str(level.pk), 'is_active': 'on',
+        })
+        self.assertRedirects(edit_response, f'/dashboard/admin/students/{student.pk}/')
+        student.refresh_from_db()
+        self.assertEqual(student.student_profile.current_level_id, level.pk)
+        delete_response = self.client.post(f'/dashboard/admin/students/{student.pk}/delete/')
+        self.assertRedirects(delete_response, '/dashboard/admin/students/')
+        self.assertFalse(User.objects.filter(pk=student.pk).exists())
+
+    def test_admin_parent_crud(self):
+        self.client.login(email='admin@braingym.local', password=DEMO_PASSWORD)
+        self.assertEqual(self.client.get('/dashboard/admin/parents/').status_code, 200)
+        create_response = self.client.post('/dashboard/admin/parents/new/', {
+            'first_name': 'Nora', 'last_name': 'Parent', 'email': 'nora@braingym.local',
+            'role': 'PARENT', 'password1': 'SecureMVP!123', 'password2': 'SecureMVP!123',
+        })
+        parent = User.objects.get(email='nora@braingym.local')
+        self.assertRedirects(create_response, f'/dashboard/admin/parents/{parent.pk}/')
+        self.assertEqual(self.client.get(f'/dashboard/admin/parents/{parent.pk}/').status_code, 200)
+        edit_response = self.client.post(f'/dashboard/admin/parents/{parent.pk}/edit/', {
+            'first_name': 'Nora', 'last_name': 'Guardian', 'email': 'nora@braingym.local', 'is_active': 'on',
+        })
+        self.assertRedirects(edit_response, f'/dashboard/admin/parents/{parent.pk}/')
+        parent.refresh_from_db()
+        self.assertEqual(parent.last_name, 'Guardian')
+        delete_response = self.client.post(f'/dashboard/admin/parents/{parent.pk}/delete/')
+        self.assertRedirects(delete_response, '/dashboard/admin/parents/')
+        self.assertFalse(User.objects.filter(pk=parent.pk).exists())
+
 # Create your tests here.

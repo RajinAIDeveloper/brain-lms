@@ -8,7 +8,15 @@ from django.db.models.deletion import ProtectedError
 from django.shortcuts import redirect, render
 
 from .models import ClassBatch, Enrollment, ParentStudentLink, User
-from .forms import AdminAccountCreationForm, TeacherAccountCreationForm, TeacherEditForm
+from .forms import (
+    AdminAccountCreationForm,
+    ParentAccountCreationForm,
+    ParentEditForm,
+    StudentAccountCreationForm,
+    StudentEditForm,
+    TeacherAccountCreationForm,
+    TeacherEditForm,
+)
 
 
 def role_required(*roles):
@@ -116,6 +124,112 @@ def teacher_delete(request, pk):
         messages.success(request, f'Teacher account for {name} was deleted.')
         return redirect('accounts:teacher_list')
     return render(request, 'dashboard/teachers/delete.html', {'dashboard_role': 'Admin', 'eyebrow': 'People and access', 'teacher': teacher})
+
+
+@role_required(User.Role.ADMIN)
+def student_list(request):
+    query = request.GET.get('q', '').strip()
+    students = User.objects.filter(role=User.Role.STUDENT).select_related('student_profile__current_level').prefetch_related('student_profile__enrollments__class_batch').order_by('first_name', 'last_name', 'email')
+    if query:
+        students = students.filter(Q(first_name__icontains=query) | Q(last_name__icontains=query) | Q(email__icontains=query))
+    return render(request, 'dashboard/students/list.html', {'dashboard_role': 'Admin', 'eyebrow': 'People and access', 'students': students, 'query': query})
+
+
+@role_required(User.Role.ADMIN)
+def student_create(request):
+    form = StudentAccountCreationForm(request.POST or None, initial={'role': User.Role.STUDENT})
+    if request.method == 'POST' and form.is_valid():
+        student = form.save()
+        messages.success(request, f'Student account created for {student.get_full_name() or student.email}.')
+        return redirect('accounts:student_detail', pk=student.pk)
+    return render(request, 'dashboard/people/form.html', {'dashboard_role': 'Admin', 'eyebrow': 'People and access', 'form': form, 'mode': 'Create', 'entity_label': 'student', 'back_url': 'accounts:student_list'})
+
+
+@role_required(User.Role.ADMIN)
+def student_detail(request, pk):
+    student = User.objects.filter(pk=pk, role=User.Role.STUDENT).select_related('student_profile__current_level').prefetch_related('student_profile__enrollments__class_batch__level', 'student_profile__parents__parent__user').first()
+    if not student:
+        raise PermissionDenied
+    return render(request, 'dashboard/students/detail.html', {'dashboard_role': 'Admin', 'eyebrow': 'People and access', 'student': student})
+
+
+@role_required(User.Role.ADMIN)
+def student_edit(request, pk):
+    student = User.objects.filter(pk=pk, role=User.Role.STUDENT).select_related('student_profile__current_level').first()
+    if not student:
+        raise PermissionDenied
+    form = StudentEditForm(request.POST or None, user=student)
+    if request.method == 'POST' and form.is_valid():
+        form.save()
+        messages.success(request, 'Student profile updated.')
+        return redirect('accounts:student_detail', pk=student.pk)
+    return render(request, 'dashboard/people/form.html', {'dashboard_role': 'Admin', 'eyebrow': 'People and access', 'form': form, 'mode': 'Edit', 'entity_label': 'student', 'back_url': 'accounts:student_list'})
+
+
+@role_required(User.Role.ADMIN)
+def student_delete(request, pk):
+    student = User.objects.filter(pk=pk, role=User.Role.STUDENT).first()
+    if not student:
+        raise PermissionDenied
+    if request.method == 'POST':
+        name = student.get_full_name() or student.email
+        student.delete()
+        messages.success(request, f'Student account for {name} was deleted.')
+        return redirect('accounts:student_list')
+    return render(request, 'dashboard/people/delete.html', {'dashboard_role': 'Admin', 'eyebrow': 'People and access', 'person': student, 'entity_label': 'student', 'detail_url': 'accounts:student_detail'})
+
+
+@role_required(User.Role.ADMIN)
+def parent_list(request):
+    query = request.GET.get('q', '').strip()
+    parents = User.objects.filter(role=User.Role.PARENT).select_related('parent_profile').prefetch_related('parent_profile__children__student__user').order_by('first_name', 'last_name', 'email')
+    if query:
+        parents = parents.filter(Q(first_name__icontains=query) | Q(last_name__icontains=query) | Q(email__icontains=query))
+    return render(request, 'dashboard/parents/list.html', {'dashboard_role': 'Admin', 'eyebrow': 'People and access', 'parents': parents, 'query': query})
+
+
+@role_required(User.Role.ADMIN)
+def parent_create(request):
+    form = ParentAccountCreationForm(request.POST or None, initial={'role': User.Role.PARENT})
+    if request.method == 'POST' and form.is_valid():
+        parent = form.save()
+        messages.success(request, f'Parent account created for {parent.get_full_name() or parent.email}.')
+        return redirect('accounts:parent_detail', pk=parent.pk)
+    return render(request, 'dashboard/people/form.html', {'dashboard_role': 'Admin', 'eyebrow': 'People and access', 'form': form, 'mode': 'Create', 'entity_label': 'parent', 'back_url': 'accounts:parent_list'})
+
+
+@role_required(User.Role.ADMIN)
+def parent_detail(request, pk):
+    parent = User.objects.filter(pk=pk, role=User.Role.PARENT).select_related('parent_profile').prefetch_related('parent_profile__children__student__current_level').first()
+    if not parent:
+        raise PermissionDenied
+    return render(request, 'dashboard/parents/detail.html', {'dashboard_role': 'Admin', 'eyebrow': 'People and access', 'parent': parent})
+
+
+@role_required(User.Role.ADMIN)
+def parent_edit(request, pk):
+    parent = User.objects.filter(pk=pk, role=User.Role.PARENT).select_related('parent_profile').first()
+    if not parent:
+        raise PermissionDenied
+    form = ParentEditForm(request.POST or None, user=parent)
+    if request.method == 'POST' and form.is_valid():
+        form.save()
+        messages.success(request, 'Parent profile updated.')
+        return redirect('accounts:parent_detail', pk=parent.pk)
+    return render(request, 'dashboard/people/form.html', {'dashboard_role': 'Admin', 'eyebrow': 'People and access', 'form': form, 'mode': 'Edit', 'entity_label': 'parent', 'back_url': 'accounts:parent_list'})
+
+
+@role_required(User.Role.ADMIN)
+def parent_delete(request, pk):
+    parent = User.objects.filter(pk=pk, role=User.Role.PARENT).first()
+    if not parent:
+        raise PermissionDenied
+    if request.method == 'POST':
+        name = parent.get_full_name() or parent.email
+        parent.delete()
+        messages.success(request, f'Parent account for {name} was deleted.')
+        return redirect('accounts:parent_list')
+    return render(request, 'dashboard/people/delete.html', {'dashboard_role': 'Admin', 'eyebrow': 'People and access', 'person': parent, 'entity_label': 'parent', 'detail_url': 'accounts:parent_detail'})
 
 
 @role_required(User.Role.TEACHER)

@@ -1,6 +1,6 @@
 from django import forms
 
-from .models import User
+from .models import Level, User
 
 
 class AdminAccountCreationForm(forms.ModelForm):
@@ -85,4 +85,77 @@ class TeacherEditForm(forms.Form):
         profile = self.user.teacher_profile
         profile.display_title = self.cleaned_data['display_title']
         profile.save()
+        return self.user
+
+
+class StudentAccountCreationForm(AdminAccountCreationForm):
+    role = forms.CharField(widget=forms.HiddenInput(), initial=User.Role.STUDENT)
+
+    def clean_role(self):
+        return User.Role.STUDENT
+
+
+class ParentAccountCreationForm(AdminAccountCreationForm):
+    role = forms.CharField(widget=forms.HiddenInput(), initial=User.Role.PARENT)
+
+    def clean_role(self):
+        return User.Role.PARENT
+
+
+class StudentEditForm(forms.Form):
+    first_name = forms.CharField(max_length=150, label='First name')
+    last_name = forms.CharField(max_length=150, label='Last name')
+    email = forms.EmailField(label='Email')
+    current_level = forms.ModelChoiceField(queryset=Level.objects.all(), required=False, label='Current level')
+    is_active = forms.BooleanField(required=False, label='Account is active')
+
+    def __init__(self, *args, user, **kwargs):
+        self.user = user
+        super().__init__(*args, **kwargs)
+        if not self.is_bound:
+            profile = user.student_profile
+            self.initial.update({'first_name': user.first_name, 'last_name': user.last_name, 'email': user.email, 'current_level': profile.current_level_id, 'is_active': user.is_active})
+
+    def clean_email(self):
+        email = self.cleaned_data['email'].strip().lower()
+        if User.objects.filter(email__iexact=email).exclude(pk=self.user.pk).exists():
+            raise forms.ValidationError('An account with this email already exists.')
+        return email
+
+    def save(self):
+        self.user.first_name = self.cleaned_data['first_name']
+        self.user.last_name = self.cleaned_data['last_name']
+        self.user.email = self.cleaned_data['email']
+        self.user.is_active = self.cleaned_data['is_active']
+        self.user.save()
+        profile = self.user.student_profile
+        profile.current_level = self.cleaned_data['current_level']
+        profile.save()
+        return self.user
+
+
+class ParentEditForm(forms.Form):
+    first_name = forms.CharField(max_length=150, label='First name')
+    last_name = forms.CharField(max_length=150, label='Last name')
+    email = forms.EmailField(label='Email')
+    is_active = forms.BooleanField(required=False, label='Account is active')
+
+    def __init__(self, *args, user, **kwargs):
+        self.user = user
+        super().__init__(*args, **kwargs)
+        if not self.is_bound:
+            self.initial.update({'first_name': user.first_name, 'last_name': user.last_name, 'email': user.email, 'is_active': user.is_active})
+
+    def clean_email(self):
+        email = self.cleaned_data['email'].strip().lower()
+        if User.objects.filter(email__iexact=email).exclude(pk=self.user.pk).exists():
+            raise forms.ValidationError('An account with this email already exists.')
+        return email
+
+    def save(self):
+        self.user.first_name = self.cleaned_data['first_name']
+        self.user.last_name = self.cleaned_data['last_name']
+        self.user.email = self.cleaned_data['email']
+        self.user.is_active = self.cleaned_data['is_active']
+        self.user.save()
         return self.user
